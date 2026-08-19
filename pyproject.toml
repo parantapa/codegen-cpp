@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codegen-cpp"
+version = "0.1.0"
+description = "A C++ code generation utility written in Python"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "Parantapa Bhattacharya", email = "pb@parantapa.net" }]
+dependencies = [
+    "click",
+    "rich",
+    "pydantic",
+    "toml",
+    "jinja2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pyright",
+    "black",
+    "pycodestyle",
+    "twine",
+]
+
+[project.scripts]
+codegen-cpp = "codegen_cpp.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+codegen_cpp = ["py.typed"]
+
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.pycodestyle]
+max-line-length = 88
