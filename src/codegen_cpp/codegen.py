@@ -2,7 +2,7 @@
 
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
-from .spec import Column, CsvReader, ScalarType, Table
+from .spec import Column, CsvReader, ParquetReader, Reader, ScalarType, Table
 
 CPP_TYPES = {
     ScalarType.i8: "std::int8_t",
@@ -66,9 +66,9 @@ def arrow_array_type(type: ScalarType) -> str:
     return ARROW_ARRAY_TYPES[type]
 
 
-def required_columns(table: Table, csv_reader: CsvReader) -> list[Column]:
-    """Return the columns of TABLE that CSV_READER does not allow to be null."""
-    nullable = set(csv_reader.nullable_columns)
+def required_columns(table: Table, reader: Reader) -> list[Column]:
+    """Return the columns of TABLE that READER does not allow to be null."""
+    nullable = set(reader.nullable_columns)
     return [column for column in table.columns if column.name not in nullable]
 
 
@@ -112,3 +112,18 @@ def render_csv_reader(csv_reader: CsvReader, table: Table) -> str:
 def csv_reader_header_name(csv_reader: CsvReader) -> str:
     """Return the file name of the C++ header defining CSV_READER."""
     return f"{csv_reader.name}.hpp"
+
+
+def render_parquet_reader(parquet_reader: ParquetReader, table: Table) -> str:
+    """
+    Return the contents of the C++ header defining PARQUET_READER.
+
+    TABLE is the table that PARQUET_READER fills in.
+    """
+    template = ENVIRONMENT.get_template("parquet_reader.hpp.jinja")
+    return template.render(parquet_reader=parquet_reader, table=table)
+
+
+def parquet_reader_header_name(parquet_reader: ParquetReader) -> str:
+    """Return the file name of the C++ header defining PARQUET_READER."""
+    return f"{parquet_reader.name}.hpp"

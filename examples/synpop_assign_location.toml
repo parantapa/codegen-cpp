@@ -15,6 +15,11 @@ columns = [
 ]
 
 [[csv_reader]]
-name = "ActivityLocationAssignmentReader"
+name = "ActivityLocationAssignmentCsvReader"
+table = "ActivityLocationAssignment"
+nullable_columns = []
+
+[[parquet_reader]]
+name = "ActivityLocationAssignmentParquetReader"
 table = "ActivityLocationAssignment"
 nullable_columns = []
