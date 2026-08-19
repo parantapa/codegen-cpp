@@ -23,3 +23,7 @@ default_values = {}
 name = "ActivityLocationAssignmentParquetReader"
 table = "ActivityLocationAssignment"
 default_values = {}
+
+[[csv_writer]]
+name = "ActivityLocationAssignmentCsvWriter"
+table = "ActivityLocationAssignment"

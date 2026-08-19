@@ -5,6 +5,7 @@ from jinja2 import Environment, PackageLoader, StrictUndefined
 from .spec import (
     Column,
     CsvReader,
+    CsvWriter,
     DefaultValue,
     ParquetReader,
     Reader,
@@ -59,6 +60,22 @@ ARROW_ARRAY_TYPES = {
 }
 
 
+ARROW_BUILDER_TYPES = {
+    ScalarType.i8: "arrow::Int8Builder",
+    ScalarType.i16: "arrow::Int16Builder",
+    ScalarType.i32: "arrow::Int32Builder",
+    ScalarType.i64: "arrow::Int64Builder",
+    ScalarType.u8: "arrow::UInt8Builder",
+    ScalarType.u16: "arrow::UInt16Builder",
+    ScalarType.u32: "arrow::UInt32Builder",
+    ScalarType.u64: "arrow::UInt64Builder",
+    ScalarType.f32: "arrow::FloatBuilder",
+    ScalarType.f64: "arrow::DoubleBuilder",
+    ScalarType.bool: "arrow::BooleanBuilder",
+    ScalarType.str: "arrow::StringBuilder",
+}
+
+
 def cpp_type(type: ScalarType) -> str:
     """Return the C++ type used to represent TYPE."""
     return CPP_TYPES[type]
@@ -72,6 +89,11 @@ def arrow_type(type: ScalarType) -> str:
 def arrow_array_type(type: ScalarType) -> str:
     """Return the Arrow array class holding a column of TYPE."""
     return ARROW_ARRAY_TYPES[type]
+
+
+def arrow_builder_type(type: ScalarType) -> str:
+    """Return the Arrow builder class building a column of TYPE."""
+    return ARROW_BUILDER_TYPES[type]
 
 
 def required_columns(table: Table, reader: Reader) -> list[Column]:
@@ -121,6 +143,7 @@ def make_environment() -> Environment:
     env.filters["cpp_type"] = cpp_type
     env.filters["arrow_type"] = arrow_type
     env.filters["arrow_array_type"] = arrow_array_type
+    env.filters["arrow_builder_type"] = arrow_builder_type
     env.filters["required_columns"] = required_columns
     env.filters["cpp_literal"] = cpp_literal
     return env
@@ -167,3 +190,18 @@ def render_parquet_reader(parquet_reader: ParquetReader, table: Table) -> str:
 def parquet_reader_header_name(parquet_reader: ParquetReader) -> str:
     """Return the file name of the C++ header defining PARQUET_READER."""
     return f"{parquet_reader.name}.hpp"
+
+
+def render_csv_writer(csv_writer: CsvWriter, table: Table) -> str:
+    """
+    Return the contents of the C++ header defining CSV_WRITER.
+
+    TABLE is the table that CSV_WRITER writes out.
+    """
+    template = ENVIRONMENT.get_template("csv_writer.hpp.jinja")
+    return template.render(csv_writer=csv_writer, table=table)
+
+
+def csv_writer_header_name(csv_writer: CsvWriter) -> str:
+    """Return the file name of the C++ header defining CSV_WRITER."""
+    return f"{csv_writer.name}.hpp"

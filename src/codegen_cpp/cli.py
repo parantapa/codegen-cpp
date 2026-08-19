@@ -8,8 +8,10 @@ from rich.console import Console
 from . import __version__
 from .codegen import (
     csv_reader_header_name,
+    csv_writer_header_name,
     parquet_reader_header_name,
     render_csv_reader,
+    render_csv_writer,
     render_parquet_reader,
     render_table,
     table_header_name,
@@ -64,6 +66,11 @@ def generate(spec_file: Path, output_dir: Path) -> None:
         header.write_text(
             render_parquet_reader(parquet_reader, tables[parquet_reader.table])
         )
+        console.print(f"Generated [bold]{header}[/bold]", soft_wrap=True)
+
+    for csv_writer in spec.csv_writers:
+        header = output_dir / csv_writer_header_name(csv_writer)
+        header.write_text(render_csv_writer(csv_writer, tables[csv_writer.table]))
         console.print(f"Generated [bold]{header}[/bold]", soft_wrap=True)
 
 

@@ -114,13 +114,20 @@ def check_default_value(column: Column, value: DefaultValue) -> str | None:
     return None
 
 
-class Reader(BaseModel):
+class TableClass(BaseModel):
+    """The fields shared by every C++ class generated for a table."""
+
+    KIND: ClassVar[str] = "table class"
+
+    name: str
+    table: str
+
+
+class Reader(TableClass):
     """The fields shared by every reader that fills in a table."""
 
     KIND: ClassVar[str] = "reader"
 
-    name: str
-    table: str
     default_values: dict[str, DefaultValue] = {}
 
 
@@ -132,15 +139,25 @@ class ParquetReader(Reader):
     KIND: ClassVar[str] = "parquet_reader"
 
 
+class CsvWriter(TableClass):
+    KIND: ClassVar[str] = "csv_writer"
+
+
 class Spec(BaseModel):
     tables: list[Table] = []
     csv_readers: list[CsvReader] = []
     parquet_readers: list[ParquetReader] = []
+    csv_writers: list[CsvWriter] = []
 
     @property
     def readers(self) -> list[Reader]:
         """Return every reader of the specification."""
         return [*self.csv_readers, *self.parquet_readers]
+
+    @property
+    def table_classes(self) -> list[TableClass]:
+        """Return every class generated for a table of the specification."""
+        return [*self.readers, *self.csv_writers]
 
     @model_validator(mode="after")
     def check_references(self) -> "Spec":
@@ -152,19 +169,22 @@ class Spec(BaseModel):
 
         # Tables and readers share one namespace.
         names = [table.name for table in self.tables]
-        names += [reader.name for reader in self.readers]
+        names += [generated.name for generated in self.table_classes]
         duplicates = find_duplicates(names)
         if duplicates:
             errors.append(f"duplicate table or reader names: {', '.join(duplicates)}")
 
         tables = {table.name: table for table in self.tables}
+        for generated in self.table_classes:
+            if generated.table not in tables:
+                errors.append(
+                    f"{generated.KIND} '{generated.name}' refers to "
+                    f"undefined table '{generated.table}'"
+                )
+
         for reader in self.readers:
             table = tables.get(reader.table)
             if table is None:
-                errors.append(
-                    f"{reader.KIND} '{reader.name}' refers to "
-                    f"undefined table '{reader.table}'"
-                )
                 continue
 
             columns = {column.name: column for column in table.columns}
@@ -195,6 +215,7 @@ SECTIONS = {
     "table": "tables",
     "csv_reader": "csv_readers",
     "parquet_reader": "parquet_readers",
+    "csv_writer": "csv_writers",
 }
 
 
