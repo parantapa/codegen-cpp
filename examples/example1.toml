@@ -1,0 +1,162 @@
+# An exemplar specification showing features of codegen-cpp.
+#
+# Generate the C++ headers of this specification with:
+#
+#     codegen-cpp generate examples/example1.toml --output-dir include
+#
+# Every table and every reader or writer becomes a header of its own name,
+# so `Measurement` is written to `Measurement.hpp`.
+# All of these names share one namespace and have to be unique.
+#
+# Inspect the parsed specification without generating anything with:
+#
+#     codegen-cpp debug parse-spec examples/example1.toml
+
+
+# A table is a column oriented store of rows.
+# Every table needs a name and at least one column.
+[[table]]
+name = "Measurement"
+
+# Each column has a name and one of the scalar types:
+#
+#     i8   i16   i32   i64     signed integers
+#     u8   u16   u32   u64     unsigned integers
+#     f32  f64                 floating point numbers
+#     bool                     booleans
+#     str                      strings
+#
+# The column names are used verbatim as C++ member names,
+# and the order of the columns is the order of the generated members.
+columns = [
+    { name = "station_id", type = "i64" },
+    { name = "sensor_id", type = "i32" },
+    { name = "sequence", type = "i16" },
+    { name = "quality", type = "i8" },
+    { name = "reading_count", type = "u64" },
+    { name = "error_count", type = "u32" },
+    { name = "retry_count", type = "u16" },
+    { name = "channel", type = "u8" },
+    { name = "temperature", type = "f64" },
+    { name = "humidity", type = "f32" },
+    { name = "is_valid", type = "bool" },
+    { name = "note", type = "str" },
+]
+
+# A specification may declare any number of tables.
+[[table]]
+name = "Station"
+columns = [
+    { name = "station_id", type = "i64" },
+    { name = "name", type = "str" },
+    { name = "latitude", type = "f64" },
+    { name = "longitude", type = "f64" },
+]
+
+
+# A csv_reader reads a CSV file into the table it names.
+# The generated class is constructed with the path of the file
+# and the number of rows to return per batch:
+#
+#     MeasurementCsvReader reader("measurements.csv.gz", 100000);
+#     while (reader.has_more_batches()) {
+#         Measurement batch = reader.read_batch();
+#     }
+#
+# Three further arguments are optional:
+#
+#     use_threads     parse the blocks of the file in parallel (false)
+#     block_size      the number of bytes parsed at a time (128 MB)
+#     compression     the codec of the file (guessed from the file name)
+#
+# The compression is guessed from the suffix of the file name:
+# `.gz`, `.zst`, `.bz2` and `.lz4` are read compressed,
+# and everything else is read as plain text.
+# Passing a codec explicitly overrides the guess.
+[[csv_reader]]
+name = "MeasurementCsvReader"
+table = "Measurement"
+
+# The columns that are allowed to be null in the input file,
+# mapped to the value stored in place of a null.
+# Reading a null in any other column is an error.
+#
+# A default value has to fit the type of its column:
+# an integer for the integer types, and one that fits in the type,
+# a number for the floating point types,
+# a boolean for `bool`, and a string for `str`.
+default_values = { quality = -1, humidity = 0.0, is_valid = false, note = "" }
+
+# A reader without default values requires every column to have a value.
+[[csv_reader]]
+name = "StationCsvReader"
+table = "Station"
+
+
+# A parquet_reader reads a Parquet file into the table it names.
+# The generated class has the same interface as the CSV reader:
+#
+#     MeasurementParquetReader reader("measurements.parquet", 100000);
+#     while (reader.has_more_batches()) {
+#         Measurement batch = reader.read_batch();
+#     }
+#
+# The columns are selected by name,
+# so the Parquet file may store them in any order
+# and may hold columns that the table does not declare.
+# Reading fails unless every column of the table
+# is stored with the type the table declares for it.
+[[parquet_reader]]
+name = "MeasurementParquetReader"
+table = "Measurement"
+default_values = { quality = -1, note = "unknown" }
+
+
+# A csv_writer writes tables out as a CSV file.
+# The generated class is constructed with the path of the file,
+# which is replaced if it already exists:
+#
+#     MeasurementCsvWriter writer("measurements.csv.zst");
+#     writer.write_batch(batch);
+#     writer.close();
+#
+# Two further arguments are optional:
+#
+#     compression         the codec of the file (guessed from the file name)
+#     compression_level   the level of the codec (the codec's own default)
+#
+# The name of the file is read the same way as by the readers.
+# Note that the codec has to support streaming compression,
+# which rules out Snappy.
+#
+# write_batch appends the rows of a table to the file,
+# and close writes out what is left and releases the file.
+# The destructor closes the file as well,
+# but only close reports a failure to write.
+[[csv_writer]]
+name = "MeasurementCsvWriter"
+table = "Measurement"
+
+[[csv_writer]]
+name = "StationCsvWriter"
+table = "Station"
+
+
+# A parquet_writer writes tables out as a Parquet file.
+# The generated class has the same interface as the CSV writer:
+#
+#     MeasurementParquetWriter writer("measurements.parquet");
+#     writer.write_batch(batch);
+#     writer.close();
+#
+# Three further arguments are optional:
+#
+#     compression         the codec of every column (Zstandard)
+#     compression_level   the level of the codec (the codec's own default)
+#     row_group_length    the number of rows per row group (128000)
+#
+# Parquet buffers the rows into row groups,
+# so they reach the file when a row group fills up or when close is called.
+[[parquet_writer]]
+name = "MeasurementParquetWriter"
+table = "Measurement"
