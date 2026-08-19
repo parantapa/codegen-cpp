@@ -1,0 +1,15 @@
+[csv_file]
+name = "activity_location_assignment"
+columns = [
+    { name = "hid", type = "i64" },
+    { name = "pid", type = "i64" },
+    { name = "activity_number", type = "i16" },
+    { name = "activity_type", type = "i16" },
+    { name = "start_time", type = "i32" },
+    { name = "duration", type = "i32" },
+    { name = "lid", type = "i64" },
+    { name = "latitude", type = "f64" },
+    { name = "longitude", type = "f64" },
+    { name = "travel_mode", type = "i8" },
+    { name = "distance", type = "f64" },
+]

@@ -13,7 +13,7 @@ authors = [{ name = "Parantapa Bhattacharya", email = "pb@parantapa.net" }]
 dependencies = [
     "click",
     "rich",
-    "pydantic",
+    "pydantic>=2",
     "toml",
     "jinja2",
 ]
@@ -42,6 +42,8 @@ target-version = ["py312"]
 
 [tool.pyright]
 include = ["src", "tests"]
+venvPath = "."
+venv = ".venv"
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
 
