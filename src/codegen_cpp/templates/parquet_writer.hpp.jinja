@@ -13,6 +13,7 @@
 
 #include <arrow/api.h>
 #include <arrow/io/api.h>
+#include <arrow/util/compression.h>
 #include <parquet/arrow/writer.h>
 
 #include "{{ table.name }}.hpp"
@@ -21,9 +22,21 @@
 // one batch of rows at a time.
 class {{ parquet_writer.name }} {
   public:
+    // The number of rows stored in a row group, unless asked otherwise.
+    static constexpr std::int64_t default_row_group_length = 128000;
+
     // Open parquet_file for writing, replacing it if it already exists.
-    explicit {{ parquet_writer.name }}(const std::string& parquet_file)
+    explicit {{ parquet_writer.name }}(
+        const std::string& parquet_file,
+        arrow::Compression::type compression = arrow::Compression::ZSTD,
+        int compression_level = arrow::util::kUseDefaultCompressionLevel,
+        std::int64_t row_group_length = default_row_group_length)
         : parquet_file_(parquet_file) {
+        if (row_group_length <= 0) {
+            throw std::invalid_argument(
+                "row_group_length must be larger than zero");
+        }
+
         schema_ = arrow::schema({
 {%- for column in table.columns %}
             arrow::field("{{ column.name }}", {{ column.type | arrow_type }}),
@@ -34,7 +47,9 @@ class {{ parquet_writer.name }} {
                          "failed to open '" + parquet_file_ + "'");
 
         const auto properties = parquet::WriterProperties::Builder()
-                                    .compression(arrow::Compression::SNAPPY)
+                                    .compression(compression)
+                                    ->compression_level(compression_level)
+                                    ->max_row_group_length(row_group_length)
                                     ->build();
 
         writer_ = unwrap(

@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -15,6 +16,8 @@
 #include <arrow/api.h>
 #include <arrow/csv/api.h>
 #include <arrow/io/api.h>
+#include <arrow/io/compressed.h>
+#include <arrow/util/compression.h>
 
 #include "{{ table.name }}.hpp"
 {%- set required = table | required_columns(csv_reader) %}
@@ -36,17 +39,40 @@
 // one batch of rows at a time.
 class {{ csv_reader.name }} {
   public:
-    {{ csv_reader.name }}(const std::string& csv_file,
-{{ " " * (csv_reader.name | length + 5) }}std::size_t batch_size)
+    // The number of bytes read at a time, unless asked otherwise.
+    static constexpr std::int32_t default_block_size = 128 * 1024 * 1024;
+
+    // Open csv_file and prepare to read it in batches of batch_size rows.
+    // The compression of the file is guessed from its name unless it is given.
+    {{ csv_reader.name }}(const std::string& csv_file, std::size_t batch_size,
+{{ " " * (csv_reader.name | length + 5) }}bool use_threads = false,
+{{ " " * (csv_reader.name | length + 5) }}std::int32_t block_size = default_block_size,
+{{ " " * (csv_reader.name | length + 5) }}std::optional<arrow::Compression::type> compression =
+{{ " " * (csv_reader.name | length + 5) }}    std::nullopt)
         : csv_file_(csv_file), batch_size_(batch_size) {
         if (batch_size_ == 0) {
             throw std::invalid_argument("batch_size must be larger than zero");
         }
+        if (block_size <= 0) {
+            throw std::invalid_argument("block_size must be larger than zero");
+        }
 
-        auto input = unwrap(arrow::io::ReadableFile::Open(csv_file_),
-                            "failed to open '" + csv_file_ + "'");
+        std::shared_ptr<arrow::io::InputStream> input =
+            unwrap(arrow::io::ReadableFile::Open(csv_file_),
+                   "failed to open '" + csv_file_ + "'");
+
+        const auto codec_type = compression.value_or(compression_of(csv_file_));
+        if (codec_type != arrow::Compression::UNCOMPRESSED) {
+            codec_ = unwrap(arrow::util::Codec::Create(codec_type),
+                            "failed to decompress '" + csv_file_ + "'");
+            input = unwrap(
+                arrow::io::CompressedInputStream::Make(codec_.get(), input),
+                "failed to decompress '" + csv_file_ + "'");
+        }
 
         auto read_options = arrow::csv::ReadOptions::Defaults();
+        read_options.use_threads = use_threads;
+        read_options.block_size = block_size;
         auto parse_options = arrow::csv::ParseOptions::Defaults();
         auto convert_options = arrow::csv::ConvertOptions::Defaults();
 
@@ -112,6 +138,23 @@ class {{ csv_reader.name }} {
     }
 
   private:
+    // Return the codec that a file of this name is compressed with.
+    static arrow::Compression::type compression_of(const std::string& path) {
+        if (path.ends_with(".gz")) {
+            return arrow::Compression::GZIP;
+        }
+        if (path.ends_with(".zst")) {
+            return arrow::Compression::ZSTD;
+        }
+        if (path.ends_with(".bz2")) {
+            return arrow::Compression::BZ2;
+        }
+        if (path.ends_with(".lz4")) {
+            return arrow::Compression::LZ4_FRAME;
+        }
+        return arrow::Compression::UNCOMPRESSED;
+    }
+
     // Throw unless result holds a value, and return the value it holds.
     template <typename T>
     static T unwrap(arrow::Result<T> result, const std::string& what) {
@@ -168,6 +211,10 @@ class {{ csv_reader.name }} {
 
     std::string csv_file_;
     std::size_t batch_size_;
+
+    // The codec has to outlive the stream decompressing with it,
+    // so it is declared first and destroyed last.
+    std::unique_ptr<arrow::util::Codec> codec_;
     std::shared_ptr<arrow::csv::StreamingReader> reader_;
 
     // The batch being read, and the index of its first unread row.

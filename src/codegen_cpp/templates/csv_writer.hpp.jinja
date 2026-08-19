@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -14,7 +15,9 @@
 #include <arrow/api.h>
 #include <arrow/csv/api.h>
 #include <arrow/io/api.h>
+#include <arrow/io/compressed.h>
 #include <arrow/ipc/writer.h>
+#include <arrow/util/compression.h>
 
 #include "{{ table.name }}.hpp"
 
@@ -22,7 +25,12 @@
 class {{ csv_writer.name }} {
   public:
     // Open csv_file for writing, replacing it if it already exists.
-    explicit {{ csv_writer.name }}(const std::string& csv_file)
+    // The compression of the file is guessed from its name unless it is given,
+    // and compression_level tunes the codec.
+    explicit {{ csv_writer.name }}(
+        const std::string& csv_file,
+        std::optional<arrow::Compression::type> compression = std::nullopt,
+        int compression_level = arrow::util::kUseDefaultCompressionLevel)
         : csv_file_(csv_file) {
         schema_ = arrow::schema({
 {%- for column in table.columns %}
@@ -32,6 +40,19 @@ class {{ csv_writer.name }} {
 
         output_ = unwrap(arrow::io::FileOutputStream::Open(csv_file_),
                          "failed to open '" + csv_file_ + "'");
+
+        const auto codec_type = compression.value_or(compression_of(csv_file_));
+        if (codec_type != arrow::Compression::UNCOMPRESSED) {
+            codec_ = unwrap(
+                arrow::util::Codec::Create(
+                    codec_type, arrow::util::CodecOptions(compression_level)),
+                "failed to compress '" + csv_file_ + "'");
+
+            // Closing this stream closes the file it writes to.
+            output_ = unwrap(
+                arrow::io::CompressedOutputStream::Make(codec_.get(), output_),
+                "failed to compress '" + csv_file_ + "'");
+        }
         writer_ = unwrap(arrow::csv::MakeCSVWriter(output_, schema_),
                          "failed to write '" + csv_file_ + "'");
     }
@@ -84,6 +105,23 @@ class {{ csv_writer.name }} {
     }
 
   private:
+    // Return the codec that a file of this name is compressed with.
+    static arrow::Compression::type compression_of(const std::string& path) {
+        if (path.ends_with(".gz")) {
+            return arrow::Compression::GZIP;
+        }
+        if (path.ends_with(".zst")) {
+            return arrow::Compression::ZSTD;
+        }
+        if (path.ends_with(".bz2")) {
+            return arrow::Compression::BZ2;
+        }
+        if (path.ends_with(".lz4")) {
+            return arrow::Compression::LZ4_FRAME;
+        }
+        return arrow::Compression::UNCOMPRESSED;
+    }
+
     // Throw unless result holds a value, and return the value it holds.
     template <typename T>
     static T unwrap(arrow::Result<T> result, const std::string& what) {
@@ -100,6 +138,10 @@ class {{ csv_writer.name }} {
 
     std::string csv_file_;
     std::shared_ptr<arrow::Schema> schema_;
+
+    // The codec has to outlive the stream compressing with it,
+    // so it is declared first and destroyed last.
+    std::unique_ptr<arrow::util::Codec> codec_;
 
     // The stream has to outlive the writer using it,
     // so it is declared first and destroyed last.
