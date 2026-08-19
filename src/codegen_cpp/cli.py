@@ -6,7 +6,12 @@ import click
 from rich.console import Console
 
 from . import __version__
-from .codegen import render_table, table_header_name
+from .codegen import (
+    csv_reader_header_name,
+    render_csv_reader,
+    render_table,
+    table_header_name,
+)
 from .spec import parse_spec
 
 console = Console()
@@ -43,6 +48,13 @@ def generate(spec_file: Path, output_dir: Path) -> None:
     for table in spec.tables:
         header = output_dir / table_header_name(table)
         header.write_text(render_table(table))
+        console.print(f"Generated [bold]{header}[/bold]", soft_wrap=True)
+
+    tables = {table.name: table for table in spec.tables}
+
+    for csv_reader in spec.csv_readers:
+        header = output_dir / csv_reader_header_name(csv_reader)
+        header.write_text(render_csv_reader(csv_reader, tables[csv_reader.table]))
         console.print(f"Generated [bold]{header}[/bold]", soft_wrap=True)
 
 
