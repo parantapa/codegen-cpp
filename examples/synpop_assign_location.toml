@@ -27,3 +27,7 @@ default_values = {}
 [[csv_writer]]
 name = "ActivityLocationAssignmentCsvWriter"
 table = "ActivityLocationAssignment"
+
+[[parquet_writer]]
+name = "ActivityLocationAssignmentParquetWriter"
+table = "ActivityLocationAssignment"

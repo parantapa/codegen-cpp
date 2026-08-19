@@ -8,6 +8,7 @@ from .spec import (
     CsvWriter,
     DefaultValue,
     ParquetReader,
+    ParquetWriter,
     Reader,
     ScalarType,
     Table,
@@ -205,3 +206,18 @@ def render_csv_writer(csv_writer: CsvWriter, table: Table) -> str:
 def csv_writer_header_name(csv_writer: CsvWriter) -> str:
     """Return the file name of the C++ header defining CSV_WRITER."""
     return f"{csv_writer.name}.hpp"
+
+
+def render_parquet_writer(parquet_writer: ParquetWriter, table: Table) -> str:
+    """
+    Return the contents of the C++ header defining PARQUET_WRITER.
+
+    TABLE is the table that PARQUET_WRITER writes out.
+    """
+    template = ENVIRONMENT.get_template("parquet_writer.hpp.jinja")
+    return template.render(parquet_writer=parquet_writer, table=table)
+
+
+def parquet_writer_header_name(parquet_writer: ParquetWriter) -> str:
+    """Return the file name of the C++ header defining PARQUET_WRITER."""
+    return f"{parquet_writer.name}.hpp"

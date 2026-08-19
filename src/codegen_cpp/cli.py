@@ -10,9 +10,11 @@ from .codegen import (
     csv_reader_header_name,
     csv_writer_header_name,
     parquet_reader_header_name,
+    parquet_writer_header_name,
     render_csv_reader,
     render_csv_writer,
     render_parquet_reader,
+    render_parquet_writer,
     render_table,
     table_header_name,
 )
@@ -71,6 +73,13 @@ def generate(spec_file: Path, output_dir: Path) -> None:
     for csv_writer in spec.csv_writers:
         header = output_dir / csv_writer_header_name(csv_writer)
         header.write_text(render_csv_writer(csv_writer, tables[csv_writer.table]))
+        console.print(f"Generated [bold]{header}[/bold]", soft_wrap=True)
+
+    for parquet_writer in spec.parquet_writers:
+        header = output_dir / parquet_writer_header_name(parquet_writer)
+        header.write_text(
+            render_parquet_writer(parquet_writer, tables[parquet_writer.table])
+        )
         console.print(f"Generated [bold]{header}[/bold]", soft_wrap=True)
 
 

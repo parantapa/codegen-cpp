@@ -143,11 +143,16 @@ class CsvWriter(TableClass):
     KIND: ClassVar[str] = "csv_writer"
 
 
+class ParquetWriter(TableClass):
+    KIND: ClassVar[str] = "parquet_writer"
+
+
 class Spec(BaseModel):
     tables: list[Table] = []
     csv_readers: list[CsvReader] = []
     parquet_readers: list[ParquetReader] = []
     csv_writers: list[CsvWriter] = []
+    parquet_writers: list[ParquetWriter] = []
 
     @property
     def readers(self) -> list[Reader]:
@@ -157,7 +162,7 @@ class Spec(BaseModel):
     @property
     def table_classes(self) -> list[TableClass]:
         """Return every class generated for a table of the specification."""
-        return [*self.readers, *self.csv_writers]
+        return [*self.readers, *self.csv_writers, *self.parquet_writers]
 
     @model_validator(mode="after")
     def check_references(self) -> "Spec":
@@ -216,6 +221,7 @@ SECTIONS = {
     "csv_reader": "csv_readers",
     "parquet_reader": "parquet_readers",
     "csv_writer": "csv_writers",
+    "parquet_writer": "parquet_writers",
 }
 
 
