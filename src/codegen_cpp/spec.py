@@ -3,6 +3,7 @@
 import tomllib
 from collections.abc import Iterable
 from enum import Enum
+from math import isfinite
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -58,15 +59,69 @@ class Table(BaseModel):
         return self
 
 
+DefaultValue = bool | int | float | str
+
+INTEGER_BITS = {
+    ScalarType.i8: 8,
+    ScalarType.i16: 16,
+    ScalarType.i32: 32,
+    ScalarType.i64: 64,
+    ScalarType.u8: 8,
+    ScalarType.u16: 16,
+    ScalarType.u32: 32,
+    ScalarType.u64: 64,
+}
+
+SIGNED_TYPES = {ScalarType.i8, ScalarType.i16, ScalarType.i32, ScalarType.i64}
+
+FLOAT_TYPES = {ScalarType.f32, ScalarType.f64}
+
+
+def check_default_value(column: Column, value: DefaultValue) -> str | None:
+    """
+    Return the reason why VALUE cannot be stored in COLUMN, or None.
+
+    Note that `bool` is a subclass of `int` in Python,
+    so booleans are checked before integers.
+    """
+    if column.type is ScalarType.bool:
+        if not isinstance(value, bool):
+            return "expects a boolean"
+        return None
+
+    if column.type is ScalarType.str:
+        if not isinstance(value, str):
+            return "expects a string"
+        return None
+
+    if column.type in FLOAT_TYPES:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return "expects a number"
+        if not isfinite(value):
+            return "expects a finite number"
+        return None
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        return "expects an integer"
+
+    bits = INTEGER_BITS[column.type]
+    if column.type in SIGNED_TYPES:
+        low, high = -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
+    else:
+        low, high = 0, 2**bits - 1
+    if not low <= value <= high:
+        return f"expects an integer between {low} and {high}"
+    return None
+
+
 class Reader(BaseModel):
     """The fields shared by every reader that fills in a table."""
 
-    # The name of the section declaring this kind of reader.
     KIND: ClassVar[str] = "reader"
 
     name: str
     table: str
-    nullable_columns: list[str] = []
+    default_values: dict[str, DefaultValue] = {}
 
 
 class CsvReader(Reader):
@@ -95,8 +150,7 @@ class Spec(BaseModel):
         """
         errors: list[str] = []
 
-        # Tables and readers share one namespace:
-        # every one of them is generated into a header file of its own name.
+        # Tables and readers share one namespace.
         names = [table.name for table in self.tables]
         names += [reader.name for reader in self.readers]
         duplicates = find_duplicates(names)
@@ -113,20 +167,24 @@ class Spec(BaseModel):
                 )
                 continue
 
-            duplicates = find_duplicates(reader.nullable_columns)
-            if duplicates:
-                errors.append(
-                    f"{reader.KIND} '{reader.name}' has duplicate "
-                    f"nullable_columns: {', '.join(duplicates)}"
-                )
-
-            columns = {column.name for column in table.columns}
-            unknown = [name for name in reader.nullable_columns if name not in columns]
+            columns = {column.name: column for column in table.columns}
+            unknown = [name for name in reader.default_values if name not in columns]
             if unknown:
                 errors.append(
-                    f"{reader.KIND} '{reader.name}' lists nullable_columns "
+                    f"{reader.KIND} '{reader.name}' lists default_values "
                     f"not in table '{table.name}': {', '.join(unknown)}"
                 )
+
+            for name, value in reader.default_values.items():
+                column = columns.get(name)
+                if column is None:
+                    continue
+                reason = check_default_value(column, value)
+                if reason is not None:
+                    errors.append(
+                        f"{reader.KIND} '{reader.name}' has a default_value "
+                        f"for column '{name}' that {reason}"
+                    )
 
         if errors:
             raise ValueError("; ".join(errors))

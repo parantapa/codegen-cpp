@@ -2,7 +2,15 @@
 
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
-from .spec import Column, CsvReader, ParquetReader, Reader, ScalarType, Table
+from .spec import (
+    Column,
+    CsvReader,
+    DefaultValue,
+    ParquetReader,
+    Reader,
+    ScalarType,
+    Table,
+)
 
 CPP_TYPES = {
     ScalarType.i8: "std::int8_t",
@@ -68,8 +76,39 @@ def arrow_array_type(type: ScalarType) -> str:
 
 def required_columns(table: Table, reader: Reader) -> list[Column]:
     """Return the columns of TABLE that READER does not allow to be null."""
-    nullable = set(reader.nullable_columns)
-    return [column for column in table.columns if column.name not in nullable]
+    return [
+        column for column in table.columns if column.name not in reader.default_values
+    ]
+
+
+# The characters that need to be escaped in a C++ string literal.
+CPP_ESCAPES = {
+    "\\": "\\\\",
+    '"': '\\"',
+    "\n": "\\n",
+    "\r": "\\r",
+    "\t": "\\t",
+}
+
+
+def cpp_literal(value: DefaultValue, type: ScalarType) -> str:
+    """
+    Return VALUE as a C++ expression of the C++ type of TYPE.
+
+    The value is spelled as a construction of its type,
+    so that it can be used where the type has to match exactly.
+    """
+    if type is ScalarType.bool:
+        literal = "true" if value else "false"
+    elif type is ScalarType.str:
+        escaped = "".join(CPP_ESCAPES.get(c, c) for c in str(value))
+        literal = f'"{escaped}"'
+    elif type in (ScalarType.f32, ScalarType.f64):
+        literal = repr(float(value))  # type: ignore[arg-type]
+    else:
+        literal = repr(int(value))  # type: ignore[arg-type]
+
+    return f"{cpp_type(type)}({literal})"
 
 
 def make_environment() -> Environment:
@@ -83,6 +122,7 @@ def make_environment() -> Environment:
     env.filters["arrow_type"] = arrow_type
     env.filters["arrow_array_type"] = arrow_array_type
     env.filters["required_columns"] = required_columns
+    env.filters["cpp_literal"] = cpp_literal
     return env
 
 

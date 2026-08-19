@@ -28,7 +28,7 @@
 {%- if column in required -%}
 {{ read }}
 {%- else -%}
-{{ array }}->IsNull(i) ? {{ column.type | cpp_type }}() : {{ read }}
+{{ array }}->IsNull(i) ? {{ csv_reader.default_values[column.name] | cpp_literal(column.type) }} : {{ read }}
 {%- endif -%}
 {%- endmacro %}
 
