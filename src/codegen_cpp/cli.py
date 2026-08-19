@@ -1,13 +1,12 @@
 """Command line interface for codegen-cpp."""
 
-import tomllib
 from pathlib import Path
 
 import click
-from pydantic import ValidationError
 from rich.console import Console
 
 from . import __version__
+from .codegen import render_table, table_header_name
 from .spec import parse_spec
 
 console = Console()
@@ -34,12 +33,25 @@ def cli() -> None:
 )
 def generate(spec_file: Path, output_dir: Path) -> None:
     """Generate C++ sources from SPEC_FILE."""
-    console.print(
-        f"Generating from [bold]{spec_file}[/bold] " f"into [bold]{output_dir}[/bold]"
-    )
+    try:
+        spec = parse_spec(spec_file)
+    except ValueError as e:
+        raise click.ClickException(f"Failed to parse {spec_file}:\n{e}") from e
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for table in spec.tables:
+        header = output_dir / table_header_name(table)
+        header.write_text(render_table(table))
+        console.print(f"Generated [bold]{header}[/bold]", soft_wrap=True)
 
 
-@cli.command("parse-spec")
+@cli.group()
+def debug() -> None:
+    """Inspect the intermediate results of the code generator."""
+
+
+@debug.command("parse-spec")
 @click.argument(
     "spec_file",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
@@ -48,7 +60,7 @@ def parse_spec_command(spec_file: Path) -> None:
     """Parse SPEC_FILE and print the parsed specification."""
     try:
         spec = parse_spec(spec_file)
-    except (tomllib.TOMLDecodeError, ValidationError) as e:
+    except ValueError as e:
         raise click.ClickException(f"Failed to parse {spec_file}:\n{e}") from e
 
     console.print(spec)

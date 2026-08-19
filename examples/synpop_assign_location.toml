@@ -1,5 +1,5 @@
-[csv_file]
-name = "activity_location_assignment"
+[[table]]
+name = "ActivityLocationAssignment"
 columns = [
     { name = "hid", type = "i64" },
     { name = "pid", type = "i64" },
@@ -13,3 +13,8 @@ columns = [
     { name = "travel_mode", type = "i8" },
     { name = "distance", type = "f64" },
 ]
+
+[[csv_reader]]
+name = "ActivityLocationAssignmentReader"
+table = "ActivityLocationAssignment"
+nullable_columns = []

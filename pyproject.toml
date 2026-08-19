@@ -34,7 +34,7 @@ codegen-cpp = "codegen_cpp.cli:cli"
 where = ["src"]
 
 [tool.setuptools.package-data]
-codegen_cpp = ["py.typed"]
+codegen_cpp = ["py.typed", "templates/*.jinja"]
 
 [tool.black]
 line-length = 88
