@@ -16,6 +16,7 @@
 #include <arrow/api.h>
 #include <arrow/io/api.h>
 #include <parquet/arrow/reader.h>
+#include <parquet/properties.h>
 
 #include "{{ table.name }}.hpp"
 {%- set required = table | required_columns(parquet_reader) %}
@@ -37,19 +38,35 @@
 // one batch of rows at a time.
 class {{ parquet_reader.name }} {
   public:
+    // The number of bytes read at a time, unless asked otherwise.
+    static constexpr std::int64_t default_buffer_size = 128 * 1024 * 1024;
+
     // Open parquet_file and prepare to read it in batches of batch_size rows.
     {{ parquet_reader.name }}(const std::string& parquet_file,
-{{ " " * (parquet_reader.name | length + 5) }}std::size_t batch_size)
+{{ " " * (parquet_reader.name | length + 5) }}std::size_t batch_size,
+{{ " " * (parquet_reader.name | length + 5) }}std::int64_t buffer_size = default_buffer_size)
         : parquet_file_(parquet_file), batch_size_(batch_size) {
         if (batch_size_ == 0) {
             throw std::invalid_argument("batch_size must be larger than zero");
+        }
+        if (buffer_size <= 0) {
+            throw std::invalid_argument("buffer_size must be larger than zero");
         }
 
         auto input = unwrap(arrow::io::ReadableFile::Open(parquet_file_),
                             "failed to open '" + parquet_file_ + "'");
 
-        reader_ = unwrap(parquet::arrow::OpenFile(std::move(input),
-                                                  arrow::default_memory_pool()),
+        // Read the file through a buffer of buffer_size bytes,
+        // instead of one read per column chunk.
+        parquet::ReaderProperties reader_properties(arrow::default_memory_pool());
+        reader_properties.enable_buffered_stream();
+        reader_properties.set_buffer_size(buffer_size);
+
+        parquet::arrow::FileReaderBuilder builder;
+        check(builder.Open(std::move(input), reader_properties),
+              "failed to open '" + parquet_file_ + "'");
+
+        reader_ = unwrap(builder.memory_pool(arrow::default_memory_pool())->Build(),
                          "failed to open '" + parquet_file_ + "'");
         reader_->set_batch_size(static_cast<std::int64_t>(batch_size_));
 

@@ -185,7 +185,7 @@ The remaining arguments are optional:
 | Class            | Optional arguments                                                            |
 | ---------------- | ----------------------------------------------------------------------------- |
 | `csv_reader`     | `use_threads` (false), `block_size` (128 MB), `compression` (guessed)         |
-| `parquet_reader` | none                                                                          |
+| `parquet_reader` | `buffer_size` (128 MB)                                                        |
 | `csv_writer`     | `compression` (guessed), `compression_level` (the codec's default)            |
 | `parquet_writer` | `compression` (Zstandard), `compression_level`, `row_group_length` (128000)   |
 
