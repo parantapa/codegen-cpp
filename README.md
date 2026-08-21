@@ -139,6 +139,12 @@ struct Measurement {
     std::vector<double> temperature;
     std::vector<std::string> note;
 
+    Measurement() = default;
+    Measurement(const Measurement&) = delete;
+    Measurement& operator=(const Measurement&) = delete;
+    Measurement(Measurement&&) = default;
+    Measurement& operator=(Measurement&&) = default;
+
     std::size_t size() const noexcept;
     void clear() noexcept;
     void reserve(std::size_t n);

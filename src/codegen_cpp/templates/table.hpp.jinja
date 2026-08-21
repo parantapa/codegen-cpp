@@ -20,6 +20,13 @@ struct {{ table.name }} {
     std::vector<{{ column.type | cpp_type }}> {{ column.name }};
 {%- endfor %}
 
+    {{ table.name }}() = default;
+
+    {{ table.name }}(const {{ table.name }}&) = delete;
+    {{ table.name }}& operator=(const {{ table.name }}&) = delete;
+    {{ table.name }}({{ table.name }}&&) = default;
+    {{ table.name }}& operator=({{ table.name }}&&) = default;
+
     std::size_t size() const noexcept {
         return {{ table.columns[0].name }}.size();
     }

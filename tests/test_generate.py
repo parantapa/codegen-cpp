@@ -49,6 +49,11 @@ def test_render_table() -> None:
     assert "        const std::string& label_) {" in header
     assert "        id.push_back(id_);" in header
     assert "row_type operator[](std::size_t i) const {" in header
+    assert "    Point() = default;" in header
+    assert "    Point(const Point&) = delete;" in header
+    assert "    Point& operator=(const Point&) = delete;" in header
+    assert "    Point(Point&&) = default;" in header
+    assert "    Point& operator=(Point&&) = default;" in header
 
 
 def test_generate_writes_one_header_per_table(tmp_path: Path) -> None:
