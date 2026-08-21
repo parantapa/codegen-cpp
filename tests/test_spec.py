@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from codegen_cpp.spec import ScalarType, parse_spec
 
-EXAMPLE = Path(__file__).parent.parent / "examples" / "example1.toml"
+EXAMPLE = Path(__file__).parent.parent / "examples" / "table1.toml"
 
 
 def test_parse_example_spec() -> None:

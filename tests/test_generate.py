@@ -22,7 +22,7 @@ from codegen_cpp.spec import (
     Table,
 )
 
-EXAMPLE = Path(__file__).parent.parent / "examples" / "example1.toml"
+EXAMPLE = Path(__file__).parent.parent / "examples" / "table1.toml"
 
 TABLE = Table(
     name="Point",
@@ -182,16 +182,32 @@ def test_render_parquet_reader() -> None:
     assert "#include <parquet/arrow/reader.h>" in header
     assert "class PointParquetReader {" in header
     assert "PointParquetReader(const std::string& parquet_file," in header
-    assert "std::size_t batch_size)" in header
+    assert "std::size_t batch_size," in header
+    assert "std::int64_t buffer_size = default_buffer_size)" in header
     assert "bool has_more_batches() {" in header
     assert "Point read_batch() {" in header
+
+
+def test_render_parquet_reader_sets_the_buffer_size() -> None:
+    """The reader reads through a buffer of the size it is given."""
+    header = render_parquet_reader(PARQUET_READER, TABLE)
+
+    assert (
+        "static constexpr std::int64_t default_buffer_size = 128 * 1024 * 1024;"
+        in header
+    )
+    assert "if (buffer_size <= 0) {" in header
+    assert "parquet::ReaderProperties reader_properties(" in header
+    assert "reader_properties.enable_buffered_stream();" in header
+    assert "reader_properties.set_buffer_size(buffer_size);" in header
 
 
 def test_render_parquet_reader_reads_record_batches() -> None:
     """The reader projects the columns it needs and reads record batches."""
     header = render_parquet_reader(PARQUET_READER, TABLE)
 
-    assert "parquet::arrow::OpenFile(" in header
+    assert "parquet::arrow::FileReaderBuilder builder;" in header
+    assert "builder.Open(std::move(input), reader_properties)" in header
     assert "reader_->set_batch_size(" in header
     assert 'field_index(*schema, "id", arrow::uint32()),' in header
     assert 'field_index(*schema, "label", arrow::utf8()),' in header

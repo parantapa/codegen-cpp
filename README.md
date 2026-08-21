@@ -74,12 +74,12 @@ int main() {
 }
 ```
 
-`examples/example1.toml` is an exemplar specification
+`examples/table1.toml` is an exemplar specification
 that shows features of the specification format..
 To see how a specification is parsed, without generating anything:
 
 ```bash
-codegen-cpp debug parse-spec examples/example1.toml
+codegen-cpp debug parse-spec examples/table1.toml
 ```
 
 ## The specification

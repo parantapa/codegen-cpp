@@ -2,7 +2,7 @@
 #
 # Generate the C++ headers of this specification with:
 #
-#     codegen-cpp generate examples/example1.toml --output-dir include
+#     codegen-cpp generate examples/table1.toml --output-dir include
 #
 # Every table and every reader or writer becomes a header of its own name,
 # so `Measurement` is written to `Measurement.hpp`.
@@ -10,7 +10,7 @@
 #
 # Inspect the parsed specification without generating anything with:
 #
-#     codegen-cpp debug parse-spec examples/example1.toml
+#     codegen-cpp debug parse-spec examples/table1.toml
 
 
 # A table is a column oriented store of rows.
