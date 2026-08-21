@@ -123,13 +123,18 @@ The value has to fit the type of its column.
 
 ## The generated code
 
-For a table called `Measurement`, `Measurement.hpp` defines two structs.
-`MeasurementRow` holds a single row by value,
-and `Measurement` holds the rows column by column,
-one `std::vector` per column:
+For a table called `Measurement`, `Measurement.hpp` defines the struct `Measurement`,
+which holds the rows column by column, one `std::vector` per column.
+Its nested struct `Measurement::row_type` holds a single row by value:
 
 ```cpp
 struct Measurement {
+    struct row_type {
+        std::int64_t station_id;
+        double temperature;
+        std::string note;
+    };
+
     std::vector<std::int64_t> station_id;
     std::vector<double> temperature;
     std::vector<std::string> note;
@@ -137,11 +142,11 @@ struct Measurement {
     std::size_t size() const noexcept;
     void clear() noexcept;
     void reserve(std::size_t n);
-    void push_back(const MeasurementRow& row);
+    void push_back(const row_type& row);
     void push_back(const std::int64_t& station_id_,
                    const double& temperature_,
                    const std::string& note_);
-    MeasurementRow operator[](std::size_t i) const;
+    row_type operator[](std::size_t i) const;
 };
 ```
 

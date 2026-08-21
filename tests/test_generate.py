@@ -34,21 +34,21 @@ TABLE = Table(
 
 
 def test_render_table() -> None:
-    """The rendered header declares a row struct and a column store."""
+    """The rendered header declares a column store with a nested row struct."""
     header = render_table(TABLE)
 
     assert "#pragma once" in header
-    assert "struct PointRow {" in header
-    assert "    std::uint32_t id;" in header
-    assert "    std::string label;" in header
     assert "struct Point {" in header
+    assert "    struct row_type {" in header
+    assert "        std::uint32_t id;" in header
+    assert "        std::string label;" in header
     assert "    std::vector<std::uint32_t> id;" in header
     assert "    std::vector<std::string> label;" in header
-    assert "void push_back(const PointRow& row) {" in header
+    assert "void push_back(const row_type& row) {" in header
     assert "        const std::uint32_t& id_," in header
     assert "        const std::string& label_) {" in header
     assert "        id.push_back(id_);" in header
-    assert "PointRow operator[](std::size_t i) const {" in header
+    assert "row_type operator[](std::size_t i) const {" in header
 
 
 def test_generate_writes_one_header_per_table(tmp_path: Path) -> None:
@@ -61,7 +61,7 @@ def test_generate_writes_one_header_per_table(tmp_path: Path) -> None:
 
     header = tmp_path / "Measurement.hpp"
     assert header.is_file()
-    assert "struct MeasurementRow {" in header.read_text()
+    assert "struct row_type {" in header.read_text()
 
 
 def test_generate_creates_missing_output_dir(tmp_path: Path) -> None:

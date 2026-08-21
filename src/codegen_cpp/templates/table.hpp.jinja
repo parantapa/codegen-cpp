@@ -8,16 +8,15 @@
 #include <string>
 #include <vector>
 
-// A single row of the table '{{ table.name }}'.
-struct {{ table.name }}Row {
-{%- for column in table.columns %}
-    {{ column.type | cpp_type }} {{ column.name }};
-{%- endfor %}
-};
-
 // Column oriented storage for the table '{{ table.name }}'.
 struct {{ table.name }} {
+    // A single row of the table '{{ table.name }}'.
+    struct row_type {
 {%- for column in table.columns %}
+        {{ column.type | cpp_type }} {{ column.name }};
+{%- endfor %}
+    };
+{% for column in table.columns %}
     std::vector<{{ column.type | cpp_type }}> {{ column.name }};
 {%- endfor %}
 
@@ -37,7 +36,7 @@ struct {{ table.name }} {
 {%- endfor %}
     }
 
-    void push_back(const {{ table.name }}Row& row) {
+    void push_back(const row_type& row) {
 {%- for column in table.columns %}
         {{ column.name }}.push_back(row.{{ column.name }});
 {%- endfor %}
@@ -52,8 +51,8 @@ struct {{ table.name }} {
 {%- endfor %}
     }
 
-    {{ table.name }}Row operator[](std::size_t i) const {
-        return {{ table.name }}Row{
+    row_type operator[](std::size_t i) const {
+        return row_type{
 {%- for column in table.columns %}
             .{{ column.name }} = {{ column.name }}[i],
 {%- endfor %}
