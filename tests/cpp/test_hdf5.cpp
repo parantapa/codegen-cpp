@@ -17,6 +17,9 @@
 #include "read_grid.hpp"
 #include "read_grid_labels.hpp"
 #include "read_grid_temperature.hpp"
+#include "write_field.hpp"
+#include "write_grid.hpp"
+#include "write_grid_temperature.hpp"
 
 namespace {
 
@@ -157,6 +160,48 @@ void fill_untouched(Grid& grid) {
     }
 }
 
+void fill_expected(Grid& grid) {
+    for (std::size_t row = 0; row < grid.dims[0]; ++row) {
+        for (std::size_t col = 0; col < grid.dims[1]; ++col) {
+            grid.temperature[row, col] = expected_temperature(row, col);
+            grid.kind[row, col] = expected_kind(row, col);
+            grid.count[row, col] = expected_count(row, col);
+        }
+    }
+}
+
+void check_grid_holds_the_expected(const Grid& grid) {
+    for (std::size_t row = 0; row < grid_rows; ++row) {
+        for (std::size_t col = 0; col < grid_cols; ++col) {
+            CHECK(grid.temperature[row, col] == expected_temperature(row, col));
+            CHECK(grid.kind[row, col] == expected_kind(row, col));
+            CHECK(grid.count[row, col] == expected_count(row, col));
+        }
+    }
+}
+
+void fill_expected(Field& field) {
+    for (std::size_t x = 0; x < field.dims[0]; ++x) {
+        for (std::size_t y = 0; y < field.dims[1]; ++y) {
+            for (std::size_t z = 0; z < field.dims[2]; ++z) {
+                field.value[x, y, z] = expected_value(x, y, z);
+                field.tag[x, y, z] = expected_tag(x, y, z);
+            }
+        }
+    }
+}
+
+void check_field_holds_the_expected(const Field& field) {
+    for (std::size_t x = 0; x < field_x; ++x) {
+        for (std::size_t y = 0; y < field_y; ++y) {
+            for (std::size_t z = 0; z < field_z; ++z) {
+                CHECK(field.value[x, y, z] == expected_value(x, y, z));
+                CHECK(field.tag[x, y, z] == expected_tag(x, y, z));
+            }
+        }
+    }
+}
+
 // Write a file holding '/sim/grid' and '/sim/field', and return its name.
 std::string write_test_file() {
     const std::string path = "sim.h5";
@@ -175,13 +220,7 @@ void test_reads_every_array() {
     fill_untouched(grid);
     read_grid(file, "/sim/grid", grid);
 
-    for (std::size_t row = 0; row < grid_rows; ++row) {
-        for (std::size_t col = 0; col < grid_cols; ++col) {
-            CHECK(grid.temperature[row, col] == expected_temperature(row, col));
-            CHECK(grid.kind[row, col] == expected_kind(row, col));
-            CHECK(grid.count[row, col] == expected_count(row, col));
-        }
-    }
+    check_grid_holds_the_expected(grid);
 }
 
 void test_include_reads_only_the_arrays_it_lists() {
@@ -227,14 +266,7 @@ void test_reads_a_column_major_dataset() {
     Field field(field_x, field_y, field_z);
     read_field(file, "/sim/field", field);
 
-    for (std::size_t x = 0; x < field_x; ++x) {
-        for (std::size_t y = 0; y < field_y; ++y) {
-            for (std::size_t z = 0; z < field_z; ++z) {
-                CHECK(field.value[x, y, z] == expected_value(x, y, z));
-                CHECK(field.tag[x, y, z] == expected_tag(x, y, z));
-            }
-        }
-    }
+    check_field_holds_the_expected(field);
 }
 
 void test_reports_a_missing_group() {
@@ -378,6 +410,151 @@ void test_reports_a_datatype_of_the_wrong_byte_order() {
         H5::PredType::STD_U16LE, "'/grid/temperature' is not stored as 'f64'");
 }
 
+// What the writer puts in a group is exactly what the reader takes back out.
+void test_writes_a_row_major_dataset() {
+    const std::string path = "written_grid.h5";
+    {
+        Grid grid(grid_rows, grid_cols);
+        fill_expected(grid);
+
+        H5::H5File file(path, H5F_ACC_TRUNC);
+        write_grid(file, "/out", grid);
+    }
+
+    H5::H5File file(path, H5F_ACC_RDONLY);
+    Grid grid(grid_rows, grid_cols);
+    fill_untouched(grid);
+    read_grid(file, "/out", grid);
+
+    check_grid_holds_the_expected(grid);
+}
+
+// 'Field' is stored column major, so the elements are gathered before they
+// are written and laid out again after they are read; an element that takes
+// the wrong turn either way shows up here.
+void test_writes_a_column_major_dataset() {
+    const std::string path = "written_field.h5";
+    {
+        Field field(field_x, field_y, field_z);
+        fill_expected(field);
+
+        H5::H5File file(path, H5F_ACC_TRUNC);
+        write_field(file, "/out", field);
+    }
+
+    H5::H5File file(path, H5F_ACC_RDONLY);
+    Field field(field_x, field_y, field_z);
+    read_field(file, "/out", field);
+
+    check_field_holds_the_expected(field);
+}
+
+void test_write_creates_the_groups_that_are_missing() {
+    const std::string path = "written_deep.h5";
+    {
+        Grid grid(grid_rows, grid_cols);
+        fill_expected(grid);
+
+        H5::H5File file(path, H5F_ACC_TRUNC);
+        write_grid(file, "/a/b/c", grid);
+    }
+
+    H5::H5File file(path, H5F_ACC_RDONLY);
+    CHECK(file.nameExists("/a"));
+    CHECK(file.openGroup("/a").nameExists("b"));
+
+    Grid grid(grid_rows, grid_cols);
+    read_grid(file, "/a/b/c", grid);
+    check_grid_holds_the_expected(grid);
+}
+
+// Writing over a group that already holds the arrays is not an error.
+void test_write_replaces_the_arrays_that_are_there() {
+    const std::string path = "written_twice.h5";
+    {
+        Grid grid(grid_rows, grid_cols);
+        for (std::size_t row = 0; row < grid_rows; ++row) {
+            for (std::size_t col = 0; col < grid_cols; ++col) {
+                grid.temperature[row, col] = 0.0;
+                grid.kind[row, col] = 0;
+                grid.count[row, col] = 0;
+            }
+        }
+
+        H5::H5File file(path, H5F_ACC_TRUNC);
+        write_grid(file, "/out", grid);
+
+        fill_expected(grid);
+        write_grid(file, "/out", grid);
+    }
+
+    H5::H5File file(path, H5F_ACC_RDONLY);
+    Grid grid(grid_rows, grid_cols);
+    read_grid(file, "/out", grid);
+
+    check_grid_holds_the_expected(grid);
+}
+
+// The array that is replaced does not have to match what is written,
+// so a group left over from something else is overwritten all the same.
+void test_write_replaces_an_array_of_another_shape_and_datatype() {
+    const std::string path = "written_over.h5";
+    {
+        H5::H5File file(path, H5F_ACC_TRUNC);
+        H5::Group group = file.createGroup("/out");
+        const std::vector<hsize_t> dims{1};
+        write_array(group, "temperature", dims, H5::PredType::STD_I16LE,
+                    H5::PredType::NATIVE_INT16, std::vector<std::int16_t>{7});
+    }
+    {
+        Grid grid(grid_rows, grid_cols);
+        fill_expected(grid);
+
+        H5::H5File file(path, H5F_ACC_RDWR);
+        write_grid(file, "/out", grid);
+    }
+
+    H5::H5File file(path, H5F_ACC_RDONLY);
+    Grid grid(grid_rows, grid_cols);
+    read_grid(file, "/out", grid);
+
+    check_grid_holds_the_expected(grid);
+}
+
+void test_include_writes_only_the_arrays_it_lists() {
+    const std::string path = "written_one.h5";
+    {
+        Grid grid(grid_rows, grid_cols);
+        fill_expected(grid);
+
+        H5::H5File file(path, H5F_ACC_TRUNC);
+        write_grid_temperature(file, "/out", grid);
+    }
+
+    H5::H5File file(path, H5F_ACC_RDONLY);
+    const H5::Group group = file.openGroup("/out");
+    CHECK(group.nameExists("temperature"));
+    CHECK(!group.nameExists("kind"));
+    CHECK(!group.nameExists("count"));
+
+    Grid grid(grid_rows, grid_cols);
+    fill_untouched(grid);
+    read_grid_temperature(file, "/out", grid);
+    CHECK(grid.temperature[0, 0] == expected_temperature(0, 0));
+    CHECK(grid.kind[0, 0] == untouched_kind);
+}
+
+void test_write_reports_a_file_that_is_open_for_reading() {
+    const std::string path = write_test_file();
+    H5::H5File file(path, H5F_ACC_RDONLY);
+
+    Grid grid(grid_rows, grid_cols);
+    fill_expected(grid);
+    const std::string error = error_of([&] { write_grid(file, "/out", grid); });
+
+    CHECK(contains(error, "failed to write '/out'"));
+}
+
 }  // namespace
 
 int main() {
@@ -399,6 +576,14 @@ int main() {
     test_reports_a_datatype_of_the_wrong_size();
     test_reports_a_datatype_of_the_wrong_signedness();
     test_reports_a_datatype_of_the_wrong_byte_order();
+
+    test_writes_a_row_major_dataset();
+    test_writes_a_column_major_dataset();
+    test_write_creates_the_groups_that_are_missing();
+    test_write_replaces_the_arrays_that_are_there();
+    test_write_replaces_an_array_of_another_shape_and_datatype();
+    test_include_writes_only_the_arrays_it_lists();
+    test_write_reports_a_file_that_is_open_for_reading();
 
     if (failures == 0) {
         std::printf("all checks passed\n");

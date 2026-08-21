@@ -62,3 +62,16 @@ exclude = ["temperature"]
 [[hdf5_reader]]
 name = "read_field"
 dataset = "Field"
+
+[[hdf5_writer]]
+name = "write_grid"
+dataset = "Grid"
+
+[[hdf5_writer]]
+name = "write_grid_temperature"
+dataset = "Grid"
+include = ["temperature"]
+
+[[hdf5_writer]]
+name = "write_field"
+dataset = "Field"

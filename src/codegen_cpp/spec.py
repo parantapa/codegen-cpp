@@ -219,16 +219,20 @@ class DatasetClass(BaseModel):
     dataset: str
 
 
-class Hdf5Reader(DatasetClass):
-    """A function reading the arrays of a dataset out of an HDF5 group."""
+class Hdf5Class(DatasetClass):
+    """The fields shared by every function over the arrays of an HDF5 group."""
 
-    KIND: ClassVar[str] = "hdf5_reader"
+    KIND: ClassVar[str] = "hdf5 class"
 
+    # At most one of these may be given.
+    # `include` names the arrays that are used,
+    # and `exclude` names the arrays that are not;
+    # without either one every array of the dataset is used.
     include: list[str] | None = None
     exclude: list[str] | None = None
 
     @model_validator(mode="after")
-    def check_include_and_exclude(self) -> "Hdf5Reader":
+    def check_include_and_exclude(self) -> "Hdf5Class":
         if self.include is not None and self.exclude is not None:
             raise ValueError(
                 f"{self.KIND} '{self.name}' lists both include and exclude"
@@ -248,19 +252,31 @@ class Hdf5Reader(DatasetClass):
         return self
 
 
-def selected_arrays(dataset: Dataset, reader: Hdf5Reader) -> list[NdArray]:
-    """
-    Return the arrays of DATASET that READER reads, in declaration order.
+class Hdf5Reader(Hdf5Class):
+    """A function reading the arrays of a dataset out of an HDF5 group."""
 
-    The include and exclude lists of the reader select them;
-    without either one every array of the dataset is read.
+    KIND: ClassVar[str] = "hdf5_reader"
+
+
+class Hdf5Writer(Hdf5Class):
+    """A function writing the arrays of a dataset into an HDF5 group."""
+
+    KIND: ClassVar[str] = "hdf5_writer"
+
+
+def selected_arrays(dataset: Dataset, hdf5_class: Hdf5Class) -> list[NdArray]:
     """
-    if reader.include is not None:
-        included = set(reader.include)
+    Return the arrays of DATASET that HDF5_CLASS uses, in declaration order.
+
+    The include and exclude lists of the reader or writer select them;
+    without either one every array of the dataset is used.
+    """
+    if hdf5_class.include is not None:
+        included = set(hdf5_class.include)
         return [array for array in dataset.arrays if array.name in included]
 
-    if reader.exclude is not None:
-        excluded = set(reader.exclude)
+    if hdf5_class.exclude is not None:
+        excluded = set(hdf5_class.exclude)
         return [array for array in dataset.arrays if array.name not in excluded]
 
     return list(dataset.arrays)
@@ -274,6 +290,7 @@ class Spec(BaseModel):
     csv_writers: list[CsvWriter] = []
     parquet_writers: list[ParquetWriter] = []
     hdf5_readers: list[Hdf5Reader] = []
+    hdf5_writers: list[Hdf5Writer] = []
 
     @property
     def readers(self) -> list[Reader]:
@@ -286,9 +303,14 @@ class Spec(BaseModel):
         return [*self.readers, *self.csv_writers, *self.parquet_writers]
 
     @property
+    def hdf5_classes(self) -> list[Hdf5Class]:
+        """Return every function generated over an HDF5 group."""
+        return [*self.hdf5_readers, *self.hdf5_writers]
+
+    @property
     def dataset_classes(self) -> list[DatasetClass]:
         """Return everything generated for a dataset of the specification."""
-        return [*self.hdf5_readers]
+        return [*self.hdf5_classes]
 
     @model_validator(mode="after")
     def check_references(self) -> "Spec":
@@ -347,29 +369,29 @@ class Spec(BaseModel):
                     f"undefined dataset '{generated.dataset}'"
                 )
 
-        for hdf5_reader in self.hdf5_readers:
-            dataset = datasets.get(hdf5_reader.dataset)
+        for hdf5_class in self.hdf5_classes:
+            dataset = datasets.get(hdf5_class.dataset)
             if dataset is None:
                 continue
 
             declared = {array.name for array in dataset.arrays}
             for kind, listed in (
-                ("include", hdf5_reader.include),
-                ("exclude", hdf5_reader.exclude),
+                ("include", hdf5_class.include),
+                ("exclude", hdf5_class.exclude),
             ):
                 if listed is None:
                     continue
                 unknown = [name for name in listed if name not in declared]
                 if unknown:
                     errors.append(
-                        f"{hdf5_reader.KIND} '{hdf5_reader.name}' lists {kind} "
+                        f"{hdf5_class.KIND} '{hdf5_class.name}' lists {kind} "
                         f"arrays not in dataset '{dataset.name}': "
                         f"{', '.join(unknown)}"
                     )
 
-            if not selected_arrays(dataset, hdf5_reader):
+            if not selected_arrays(dataset, hdf5_class):
                 errors.append(
-                    f"{hdf5_reader.KIND} '{hdf5_reader.name}' reads no array "
+                    f"{hdf5_class.KIND} '{hdf5_class.name}' selects no array "
                     f"of dataset '{dataset.name}'"
                 )
 
@@ -386,6 +408,7 @@ SECTIONS = {
     "csv_writer": "csv_writers",
     "parquet_writer": "parquet_writers",
     "hdf5_reader": "hdf5_readers",
+    "hdf5_writer": "hdf5_writers",
 }
 
 

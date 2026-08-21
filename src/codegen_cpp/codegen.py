@@ -9,6 +9,7 @@ from .spec import (
     Dataset,
     DefaultValue,
     Hdf5Reader,
+    Hdf5Writer,
     ParquetReader,
     ParquetWriter,
     Reader,
@@ -273,3 +274,18 @@ def render_hdf5_reader(hdf5_reader: Hdf5Reader, dataset: Dataset) -> str:
 def hdf5_reader_header_name(hdf5_reader: Hdf5Reader) -> str:
     """Return the file name of the C++ header defining HDF5_READER."""
     return f"{hdf5_reader.name}.hpp"
+
+
+def render_hdf5_writer(hdf5_writer: Hdf5Writer, dataset: Dataset) -> str:
+    """
+    Return the contents of the C++ header defining HDF5_WRITER.
+
+    DATASET is the dataset that HDF5_WRITER writes out.
+    """
+    template = ENVIRONMENT.get_template("hdf5_writer.hpp.jinja")
+    return template.render(hdf5_writer=hdf5_writer, dataset=dataset)
+
+
+def hdf5_writer_header_name(hdf5_writer: Hdf5Writer) -> str:
+    """Return the file name of the C++ header defining HDF5_WRITER."""
+    return f"{hdf5_writer.name}.hpp"

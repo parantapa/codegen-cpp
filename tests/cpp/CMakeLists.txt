@@ -25,6 +25,9 @@ set(GENERATED_HEADERS
     "${GENERATED_DIR}/read_grid_temperature.hpp"
     "${GENERATED_DIR}/read_grid_labels.hpp"
     "${GENERATED_DIR}/read_field.hpp"
+    "${GENERATED_DIR}/write_grid.hpp"
+    "${GENERATED_DIR}/write_grid_temperature.hpp"
+    "${GENERATED_DIR}/write_field.hpp"
 )
 
 # Regenerate whenever the specification or one of the templates changes.

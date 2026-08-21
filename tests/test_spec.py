@@ -9,6 +9,7 @@ from codegen_cpp.spec import (
     NUMERIC_TYPES,
     Dataset,
     Hdf5Reader,
+    Hdf5Writer,
     NdArray,
     ScalarType,
     parse_spec,
@@ -457,11 +458,18 @@ def test_selected_arrays_keeps_the_declaration_order() -> None:
     assert [array.name for array in selected_arrays(dataset, reader)] == ["x", "z"]
 
 
-def test_hdf5_reader_with_both_include_and_exclude_rejected(tmp_path: Path) -> None:
-    """A reader may not narrow its arrays from both ends."""
+# The include and exclude rules are the same for readers and for writers.
+HDF5_SECTIONS = ["hdf5_reader", "hdf5_writer"]
+
+
+@pytest.mark.parametrize("section", HDF5_SECTIONS)
+def test_hdf5_with_both_include_and_exclude_rejected(
+    tmp_path: Path, section: str
+) -> None:
+    """A reader or writer may not narrow its arrays from both ends."""
     spec_file = write_spec(
         tmp_path,
-        GOOD_HDF5_DATASET + "[[hdf5_reader]]\n"
+        GOOD_HDF5_DATASET + f"[[{section}]]\n"
         'name = "r"\n'
         'dataset = "d"\n'
         'include = ["x"]\n'
@@ -472,12 +480,15 @@ def test_hdf5_reader_with_both_include_and_exclude_rejected(tmp_path: Path) -> N
         parse_spec(spec_file)
 
 
+@pytest.mark.parametrize("section", HDF5_SECTIONS)
 @pytest.mark.parametrize("kind", ["include", "exclude"])
-def test_hdf5_reader_with_an_empty_list_rejected(tmp_path: Path, kind: str) -> None:
+def test_hdf5_with_an_empty_list_rejected(
+    tmp_path: Path, section: str, kind: str
+) -> None:
     """An include or exclude list that is given may not be empty."""
     spec_file = write_spec(
         tmp_path,
-        GOOD_HDF5_DATASET + "[[hdf5_reader]]\n"
+        GOOD_HDF5_DATASET + f"[[{section}]]\n"
         'name = "r"\n'
         'dataset = "d"\n'
         f"{kind} = []\n",
@@ -487,12 +498,15 @@ def test_hdf5_reader_with_an_empty_list_rejected(tmp_path: Path, kind: str) -> N
         parse_spec(spec_file)
 
 
+@pytest.mark.parametrize("section", HDF5_SECTIONS)
 @pytest.mark.parametrize("kind", ["include", "exclude"])
-def test_hdf5_reader_with_a_duplicate_array_rejected(tmp_path: Path, kind: str) -> None:
+def test_hdf5_with_a_duplicate_array_rejected(
+    tmp_path: Path, section: str, kind: str
+) -> None:
     """An include or exclude list may not name the same array twice."""
     spec_file = write_spec(
         tmp_path,
-        GOOD_HDF5_DATASET + "[[hdf5_reader]]\n"
+        GOOD_HDF5_DATASET + f"[[{section}]]\n"
         'name = "r"\n'
         'dataset = "d"\n'
         f'{kind} = ["x", "x"]\n',
@@ -502,12 +516,15 @@ def test_hdf5_reader_with_a_duplicate_array_rejected(tmp_path: Path, kind: str) 
         parse_spec(spec_file)
 
 
+@pytest.mark.parametrize("section", HDF5_SECTIONS)
 @pytest.mark.parametrize("kind", ["include", "exclude"])
-def test_hdf5_reader_with_an_unknown_array_rejected(tmp_path: Path, kind: str) -> None:
+def test_hdf5_with_an_unknown_array_rejected(
+    tmp_path: Path, section: str, kind: str
+) -> None:
     """An include or exclude list may only name arrays of the dataset."""
     spec_file = write_spec(
         tmp_path,
-        GOOD_HDF5_DATASET + "[[hdf5_reader]]\n"
+        GOOD_HDF5_DATASET + f"[[{section}]]\n"
         'name = "r"\n'
         'dataset = "d"\n'
         f'{kind} = ["x", "zzz"]\n',
@@ -520,25 +537,27 @@ def test_hdf5_reader_with_an_unknown_array_rejected(tmp_path: Path, kind: str) -
         parse_spec(spec_file)
 
 
-def test_hdf5_reader_that_excludes_every_array_rejected(tmp_path: Path) -> None:
-    """A reader that is left with no array to read is an error."""
+@pytest.mark.parametrize("section", HDF5_SECTIONS)
+def test_hdf5_that_excludes_every_array_rejected(tmp_path: Path, section: str) -> None:
+    """A reader or writer left with no array to use is an error."""
     spec_file = write_spec(
         tmp_path,
-        GOOD_HDF5_DATASET + "[[hdf5_reader]]\n"
+        GOOD_HDF5_DATASET + f"[[{section}]]\n"
         'name = "r"\n'
         'dataset = "d"\n'
         'exclude = ["x", "y", "z"]\n',
     )
 
-    with pytest.raises(ValidationError, match="reads no array of dataset 'd'"):
+    with pytest.raises(ValidationError, match="selects no array of dataset 'd'"):
         parse_spec(spec_file)
 
 
-def test_hdf5_reader_with_an_unknown_dataset_rejected(tmp_path: Path) -> None:
-    """An HDF5 reader must refer to a defined dataset."""
+@pytest.mark.parametrize("section", HDF5_SECTIONS)
+def test_hdf5_with_an_unknown_dataset_rejected(tmp_path: Path, section: str) -> None:
+    """An HDF5 reader or writer must refer to a defined dataset."""
     spec_file = write_spec(
         tmp_path,
-        GOOD_HDF5_DATASET + '[[hdf5_reader]]\nname = "r"\ndataset = "missing"\n',
+        GOOD_HDF5_DATASET + f'[[{section}]]\nname = "r"\ndataset = "missing"\n',
     )
 
     with pytest.raises(ValidationError, match="undefined dataset 'missing'"):
@@ -581,3 +600,54 @@ def test_column_major_is_kept(tmp_path: Path) -> None:
     spec = parse_spec(spec_file)
 
     assert spec.datasets[0].column_major is True
+
+
+def test_parse_hdf5_writers() -> None:
+    """The bundled n-dimensional array example parses its HDF5 writers."""
+    spec = parse_spec(NDARRAY_EXAMPLE)
+
+    assert [writer.name for writer in spec.hdf5_writers] == ["write_tile_data"]
+
+    writer = spec.hdf5_writers[0]
+    assert writer.dataset == "TileData"
+    assert writer.include is None
+    assert writer.exclude is None
+
+
+def test_hdf5_classes_hold_the_readers_and_the_writers() -> None:
+    """Readers and writers share the checks that apply to both."""
+    spec = parse_spec(NDARRAY_EXAMPLE)
+
+    assert [c.KIND for c in spec.hdf5_classes] == [
+        "hdf5_reader",
+        "hdf5_reader",
+        "hdf5_reader",
+        "hdf5_writer",
+    ]
+
+
+def test_selected_arrays_of_a_writer() -> None:
+    """A writer narrows its arrays the same way a reader does."""
+    dataset = Dataset(
+        name="d",
+        dims=["row"],
+        arrays=[
+            NdArray(name="x", type=ScalarType.f32),
+            NdArray(name="y", type=ScalarType.i8),
+        ],
+    )
+    writer = Hdf5Writer(name="w", dataset="d", exclude=["x"])
+
+    assert [array.name for array in selected_arrays(dataset, writer)] == ["y"]
+
+
+def test_hdf5_writer_shares_the_one_namespace(tmp_path: Path) -> None:
+    """A reader and a writer may not share a name."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_HDF5_DATASET + '[[hdf5_reader]]\nname = "f"\ndataset = "d"\n'
+        '[[hdf5_writer]]\nname = "f"\ndataset = "d"\n',
+    )
+
+    with pytest.raises(ValidationError, match="duplicate table or reader names: f"):
+        parse_spec(spec_file)

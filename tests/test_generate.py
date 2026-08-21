@@ -10,6 +10,7 @@ from codegen_cpp.codegen import (
     render_csv_writer,
     render_dataset,
     render_hdf5_reader,
+    render_hdf5_writer,
     render_parquet_reader,
     render_parquet_writer,
     render_table,
@@ -20,6 +21,7 @@ from codegen_cpp.spec import (
     CsvWriter,
     Dataset,
     Hdf5Reader,
+    Hdf5Writer,
     NdArray,
     ParquetReader,
     ParquetWriter,
@@ -690,6 +692,7 @@ def test_generate_writes_one_header_per_hdf5_reader(tmp_path: Path) -> None:
         "read_seed_data.hpp",
         "read_tick_data.hpp",
         "read_tile_data.hpp",
+        "write_tile_data.hpp",
     ]
 
     text = (tmp_path / "read_tile_data.hpp").read_text()
@@ -699,3 +702,127 @@ def test_generate_writes_one_header_per_hdf5_reader(tmp_path: Path) -> None:
     # 'read_tile_data' excludes 'state' and 'read_seed_data' includes only it.
     assert "state" not in text
     assert "burn_time" not in (tmp_path / "read_seed_data.hpp").read_text()
+
+
+HDF5_WRITER = Hdf5Writer(name="write_tile_data", dataset="TileData")
+
+
+def test_render_hdf5_writer() -> None:
+    """The rendered header defines a function over the dataset header."""
+    header = render_hdf5_writer(HDF5_WRITER, DATASET)
+
+    assert "#pragma once" in header
+    assert "#include <H5Cpp.h>" in header
+    assert '#include "TileData.hpp"' in header
+    assert "inline void write_tile_data(H5::H5File& file," in header
+    assert "const std::string& group_path," in header
+    assert "const TileData& data) {" in header
+
+
+def test_render_hdf5_writer_declares_nothing_but_the_function() -> None:
+    """The macros expand in place, so the header holds one function."""
+    header = render_hdf5_writer(HDF5_WRITER, DATASET)
+
+    top_level = [
+        line
+        for line in header.splitlines()
+        if line and not line.startswith((" ", "}", "#", "//"))
+    ]
+    assert len(top_level) == 1
+    assert top_level[0].startswith("inline void write_tile_data(")
+
+    assert "namespace" not in header
+    assert "template" not in header
+
+
+def test_render_hdf5_writer_creates_the_groups_that_are_missing() -> None:
+    """The path is walked a name at a time, creating what is not there."""
+    header = render_hdf5_writer(HDF5_WRITER, DATASET)
+
+    assert 'H5::Group group = file.openGroup("/");' in header
+    assert "const std::size_t end = group_path.find('/', begin);" in header
+    assert "group = group.nameExists(name) ? group.openGroup(name)" in header
+    assert ": group.createGroup(name);" in header
+
+
+def test_render_hdf5_writer_replaces_an_array_that_is_there() -> None:
+    """An array the group already holds is unlinked and created again."""
+    header = render_hdf5_writer(HDF5_WRITER, DATASET)
+
+    assert 'if (group.nameExists("burn_time")) {' in header
+    assert 'group.unlink("burn_time");' in header
+    assert "const H5::DataSet array = group.createDataSet(" in header
+    assert '"burn_time", H5::PredType::NATIVE_FLOAT, space);' in header
+
+
+def test_render_hdf5_writer_builds_one_dataspace_for_every_array() -> None:
+    """Every array shares the shape data was allocated with."""
+    header = render_hdf5_writer(HDF5_WRITER, DATASET)
+
+    assert "std::array<hsize_t, TileData::rank> extents;" in header
+    assert "extents[i] = static_cast<hsize_t>(data.dims[i]);" in header
+    assert "const H5::DataSpace space(static_cast<int>(TileData::rank)," in header
+
+
+def test_render_hdf5_writer_include() -> None:
+    """An include list writes only the arrays it names."""
+    writer = Hdf5Writer(name="write_seed", dataset="TileData", include=["state"])
+    header = render_hdf5_writer(writer, DATASET)
+
+    assert 'group.createDataSet(\n                "state"' in header
+    assert "burn_time" not in header
+    assert "// Write the array state" in header
+
+
+def test_render_hdf5_writer_exclude() -> None:
+    """An exclude list writes every array it does not name."""
+    writer = Hdf5Writer(name="write_rest", dataset="TileData", exclude=["state"])
+    header = render_hdf5_writer(writer, DATASET)
+
+    assert "burn_time" in header
+    assert "state" not in header
+
+
+def test_render_hdf5_writer_of_a_row_major_dataset_writes_in_place() -> None:
+    """A row major dataset is stored the way HDF5 writes, so it goes as it is."""
+    header = render_hdf5_writer(HDF5_WRITER, DATASET)
+
+    assert "array.write(data._mem_burn_time.get()," in header
+    assert "buffer" not in header
+    assert "#include <vector>" not in header
+
+
+def test_render_hdf5_writer_of_a_column_major_dataset_gathers_first() -> None:
+    """A column major dataset of rank two or more is gathered before writing."""
+    header = render_hdf5_writer(
+        HDF5_WRITER, DATASET.model_copy(update={"column_major": True})
+    )
+
+    assert "#include <vector>" in header
+    assert "std::vector<float> buffer(data.size());" in header
+    assert "for (std::size_t i0 = 0; i0 < data.dims[0]; ++i0) {" in header
+    assert "buffer[element++] = data.burn_time[i0, i1];" in header
+    assert "array.write(buffer.data(), H5::PredType::NATIVE_FLOAT);" in header
+
+
+def test_render_hdf5_writer_reports_errors_as_runtime_errors() -> None:
+    """Everything that goes wrong is reported as a std::runtime_error."""
+    header = render_hdf5_writer(HDF5_WRITER, DATASET)
+
+    assert "} catch (const H5::Exception& e) {" in header
+    assert 'throw std::runtime_error("failed to write \'" + group_path' in header
+
+
+def test_generate_writes_one_header_per_hdf5_writer(tmp_path: Path) -> None:
+    """Generate writes a header named after every HDF5 writer of the spec."""
+    result = CliRunner().invoke(
+        cli, ["generate", str(NDARRAY_EXAMPLE), "--output-dir", str(tmp_path)]
+    )
+
+    assert result.exit_code == 0, result.output
+
+    header = tmp_path / "write_tile_data.hpp"
+    text = header.read_text()
+    assert '#include "TileData.hpp"' in text
+    assert "inline void write_tile_data(H5::H5File& file," in text
+    assert "const TileData& data) {" in text

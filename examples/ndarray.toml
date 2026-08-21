@@ -1,0 +1,52 @@
+# Dataset of n-dimensional arrays with named dimensions
+
+[[dataset]]
+
+name = "TickData"
+dims = ["tick"]
+arrays = [
+    { name = "wind_speed", type = "f32" },
+    { name = "wind_direction", type = "f32" },
+]
+
+[[dataset]]
+
+name = "TileData"
+dims = ["row", "col"]
+arrays = [
+    { name = "burn_time", type = "f32" },
+    { name = "fuel", type = "f32" },
+    { name = "moisture", type = "f32" },
+    { name = "state", type = "i8" },
+]
+
+[[dataset]]
+
+name = "SimOutput"
+dims = ["tick", "row", "col"]
+arrays = [
+    { name = "state", type = "i8" },
+]
+column_major = true
+
+[[hdf5_reader]]
+
+name = "read_tick_data"
+dataset = "TickData"
+
+[[hdf5_reader]]
+
+name = "read_tile_data"
+dataset = "TileData"
+exclude = ["state"]
+
+[[hdf5_reader]]
+
+name = "read_seed_data"
+dataset = "TileData"
+include = ["state"]
+
+[[hdf5_writer]]
+
+name = "write_tile_data"
+dataset = "TileData"
