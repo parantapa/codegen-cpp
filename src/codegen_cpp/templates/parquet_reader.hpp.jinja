@@ -46,10 +46,10 @@ class {{ parquet_reader.name }} {
 {{ " " * (parquet_reader.name | length + 5) }}std::size_t batch_size,
 {{ " " * (parquet_reader.name | length + 5) }}std::int64_t buffer_size = default_buffer_size)
         : parquet_file_(parquet_file), batch_size_(batch_size) {
-        if (batch_size_ == 0) {
+        if (batch_size_ == 0) [[unlikely]] {
             throw std::invalid_argument("batch_size must be larger than zero");
         }
-        if (buffer_size <= 0) {
+        if (buffer_size <= 0) [[unlikely]] {
             throw std::invalid_argument("buffer_size must be larger than zero");
         }
 
@@ -143,7 +143,7 @@ class {{ parquet_reader.name }} {
 
     // Throw unless status is ok.
     static void check(const arrow::Status& status, const std::string& what) {
-        if (!status.ok()) {
+        if (!status.ok()) [[unlikely]] {
             throw std::runtime_error(what + ": " + status.ToString());
         }
     }
@@ -153,13 +153,13 @@ class {{ parquet_reader.name }} {
     int field_index(const arrow::Schema& schema, const std::string& name,
                     const std::shared_ptr<arrow::DataType>& type) const {
         const int index = schema.GetFieldIndex(name);
-        if (index < 0) {
+        if (index < 0) [[unlikely]] {
             throw std::runtime_error("'" + parquet_file_ +
                                      "' has no column '" + name + "'");
         }
 
         const auto& stored = schema.field(index)->type();
-        if (!stored->Equals(*type)) {
+        if (!stored->Equals(*type)) [[unlikely]] {
             throw std::runtime_error(
                 "column '" + name + "' of '" + parquet_file_ + "' has type " +
                 stored->ToString() + " instead of " + type->ToString());
@@ -170,12 +170,12 @@ class {{ parquet_reader.name }} {
     // Throw unless the batches hold the columns of '{{ table.name }}',
     // in the order in which they are declared.
     void check_schema(const arrow::Schema& schema) const {
-        if (schema.num_fields() != {{ table.columns | length }}) {
+        if (schema.num_fields() != {{ table.columns | length }}) [[unlikely]] {
             throw std::runtime_error("'" + parquet_file_ +
                                      "' is read with unexpected columns");
         }
 {%- for column in table.columns %}
-        if (schema.field({{ loop.index0 }})->name() != "{{ column.name }}") {
+        if (schema.field({{ loop.index0 }})->name() != "{{ column.name }}") [[unlikely]] {
             throw std::runtime_error("'" + parquet_file_ +
                                      "' is read with unexpected columns");
         }
@@ -212,7 +212,7 @@ class {{ parquet_reader.name }} {
 {%- if required %}const arrow::RecordBatch& batch) const {
 {%- for column in table.columns %}
 {%- if column in required %}
-        if (batch.column({{ loop.index0 }})->null_count() != 0) {
+        if (batch.column({{ loop.index0 }})->null_count() != 0) [[unlikely]] {
             throw std::runtime_error("column '{{ column.name }}' of '" +
                                      parquet_file_ + "' contains null values");
         }

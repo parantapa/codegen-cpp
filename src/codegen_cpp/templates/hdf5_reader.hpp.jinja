@@ -21,7 +21,7 @@
 #include "{{ dataset.name }}.hpp"
 {%- macro open_array(nd_array) %}
             const std::string path = group_path + "/{{ nd_array.name }}";
-            if (!group.nameExists("{{ nd_array.name }}")) {
+            if (!group.nameExists("{{ nd_array.name }}")) [[unlikely]] {
                 throw std::runtime_error("'" + path +
                                          "' is not in the HDF5 file");
             }
@@ -29,14 +29,15 @@
             const H5::DataSet array = group.openDataSet("{{ nd_array.name }}");
 {%- endmacro %}
 {%- macro check_datatype(nd_array) %}
-            if (array.getDataType() != {{ nd_array.type | hdf5_native_type }}) {
+            const H5::DataType stored = array.getDataType();
+            if (stored != {{ nd_array.type | hdf5_native_type }}) [[unlikely]] {
                 throw std::runtime_error(
                     "'" + path + "' is not stored as '{{ nd_array.type.value }}'");
             }
 {%- endmacro %}
 {%- macro check_shape() %}
             const H5::DataSpace space = array.getSpace();
-            if (space.getSimpleExtentNdims() != {{ dataset.ndim }}) {
+            if (space.getSimpleExtentNdims() != {{ dataset.ndim }}) [[unlikely]] {
                 throw std::runtime_error("'" + path +
                                          "' does not have rank {{ dataset.ndim }}");
             }
@@ -44,7 +45,8 @@
             std::array<hsize_t, {{ dataset.name }}::rank> extents;
             space.getSimpleExtentDims(extents.data());
             for (std::size_t i = 0; i < {{ dataset.name }}::rank; ++i) {
-                if (extents[i] != static_cast<hsize_t>(data.dims[i])) {
+                const hsize_t declared = static_cast<hsize_t>(data.dims[i]);
+                if (extents[i] != declared) [[unlikely]] {
                     throw std::runtime_error(
                         "'" + path + "' has extent " +
                         std::to_string(extents[i]) + " instead of " +

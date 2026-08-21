@@ -50,10 +50,10 @@ class {{ csv_reader.name }} {
 {{ " " * (csv_reader.name | length + 5) }}std::optional<arrow::Compression::type> compression =
 {{ " " * (csv_reader.name | length + 5) }}    std::nullopt)
         : csv_file_(csv_file), batch_size_(batch_size) {
-        if (batch_size_ == 0) {
+        if (batch_size_ == 0) [[unlikely]] {
             throw std::invalid_argument("batch_size must be larger than zero");
         }
-        if (block_size <= 0) {
+        if (block_size <= 0) [[unlikely]] {
             throw std::invalid_argument("block_size must be larger than zero");
         }
 
@@ -164,7 +164,7 @@ class {{ csv_reader.name }} {
 
     // Throw unless status is ok.
     static void check(const arrow::Status& status, const std::string& what) {
-        if (!status.ok()) {
+        if (!status.ok()) [[unlikely]] {
             throw std::runtime_error(what + ": " + status.ToString());
         }
     }
@@ -199,7 +199,7 @@ class {{ csv_reader.name }} {
 {%- if required %}const arrow::RecordBatch& batch) {
 {%- for column in table.columns %}
 {%- if column in required %}
-        if (batch.column({{ loop.index0 }})->null_count() != 0) {
+        if (batch.column({{ loop.index0 }})->null_count() != 0) [[unlikely]] {
             throw std::runtime_error(
                 "column '{{ column.name }}' contains null values");
         }

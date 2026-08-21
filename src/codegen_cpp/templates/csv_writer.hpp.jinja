@@ -66,7 +66,7 @@ class {{ csv_writer.name }} {
     }
 
     void write_batch(const {{ table.name }}& table) {
-        if (writer_ == nullptr) {
+        if (writer_ == nullptr) [[unlikely]] {
             throw std::runtime_error("'" + csv_file_ + "' is closed");
         }
 {% for column in table.columns %}
@@ -131,7 +131,7 @@ class {{ csv_writer.name }} {
 
     // Throw unless status is ok.
     static void check(const arrow::Status& status, const std::string& what) {
-        if (!status.ok()) {
+        if (!status.ok()) [[unlikely]] {
             throw std::runtime_error(what + ": " + status.ToString());
         }
     }

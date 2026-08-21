@@ -73,7 +73,7 @@ struct {{ dataset.name }} {
 {%- endfor %}) {
         std::size_t total = 1;
 {%- for dim in dataset.dims %}
-        if ({{ dim }} != 0 && total > SIZE_MAX / {{ dim }}) {
+        if ({{ dim }} != 0 && total > SIZE_MAX / {{ dim }}) [[unlikely]] {
             throw std::length_error(
                 "the shape of '{{ dataset.name }}' overflows std::size_t");
         }

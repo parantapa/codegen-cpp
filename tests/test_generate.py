@@ -136,7 +136,7 @@ def test_render_csv_reader_null_handling() -> None:
     header = render_csv_reader(READER, TABLE)
 
     # 'id' is column 0 and is not nullable; 'label' is column 1 and is.
-    assert "if (batch.column(0)->null_count() != 0) {" in header
+    assert "if (batch.column(0)->null_count() != 0) [[unlikely]] {" in header
     assert "\"column 'id' contains null values\"" in header
     assert "if (batch.column(1)->null_count() != 0) {" not in header
 
@@ -203,7 +203,7 @@ def test_render_parquet_reader_sets_the_buffer_size() -> None:
         "static constexpr std::int64_t default_buffer_size = 128 * 1024 * 1024;"
         in header
     )
-    assert "if (buffer_size <= 0) {" in header
+    assert "if (buffer_size <= 0) [[unlikely]] {" in header
     assert "parquet::ReaderProperties reader_properties(" in header
     assert "reader_properties.enable_buffered_stream();" in header
     assert "reader_properties.set_buffer_size(buffer_size);" in header
@@ -228,16 +228,16 @@ def test_render_parquet_reader_checks_the_schema() -> None:
     """The reader verifies the columns it is given, in order."""
     header = render_parquet_reader(PARQUET_READER, TABLE)
 
-    assert "if (schema.num_fields() != 2) {" in header
-    assert 'if (schema.field(0)->name() != "id") {' in header
-    assert 'if (schema.field(1)->name() != "label") {' in header
+    assert "if (schema.num_fields() != 2) [[unlikely]] {" in header
+    assert 'if (schema.field(0)->name() != "id") [[unlikely]] {' in header
+    assert 'if (schema.field(1)->name() != "label") [[unlikely]] {' in header
 
 
 def test_render_parquet_reader_null_handling() -> None:
     """Only the columns that are not nullable are checked for nulls."""
     header = render_parquet_reader(PARQUET_READER, TABLE)
 
-    assert "if (batch.column(0)->null_count() != 0) {" in header
+    assert "if (batch.column(0)->null_count() != 0) [[unlikely]] {" in header
     assert "\"column 'id' of '\"" in header
     assert "if (batch.column(1)->null_count() != 0) {" not in header
 
@@ -548,7 +548,7 @@ def test_render_hdf5_reader_reads_every_array_by_default() -> None:
 
     assert 'const std::string path = group_path + "/burn_time";' in header
     assert 'const std::string path = group_path + "/state";' in header
-    assert 'if (!group.nameExists("burn_time")) {' in header
+    assert 'if (!group.nameExists("burn_time")) [[unlikely]] {' in header
     assert 'const H5::DataSet array = group.openDataSet("state");' in header
 
 
@@ -575,8 +575,9 @@ def test_render_hdf5_reader_pins_the_datatypes() -> None:
     """Every array is checked against the predefined type it declares."""
     header = render_hdf5_reader(HDF5_READER, DATASET)
 
-    assert "if (array.getDataType() != H5::PredType::NATIVE_FLOAT) {" in header
-    assert "if (array.getDataType() != H5::PredType::NATIVE_INT8) {" in header
+    assert "const H5::DataType stored = array.getDataType();" in header
+    assert "if (stored != H5::PredType::NATIVE_FLOAT) [[unlikely]] {" in header
+    assert "if (stored != H5::PredType::NATIVE_INT8) [[unlikely]] {" in header
     assert "\"' is not stored as 'f32'\");" in header
     assert "\"' is not stored as 'i8'\");" in header
 
@@ -591,11 +592,12 @@ def test_render_hdf5_reader_checks_the_shape() -> None:
     header = render_hdf5_reader(HDF5_READER, DATASET)
 
     assert "const H5::DataSpace space = array.getSpace();" in header
-    assert "if (space.getSimpleExtentNdims() != 2) {" in header
+    assert "if (space.getSimpleExtentNdims() != 2) [[unlikely]] {" in header
     assert "std::array<hsize_t, TileData::rank> extents;" in header
     assert "space.getSimpleExtentDims(extents.data());" in header
     assert "for (std::size_t i = 0; i < TileData::rank; ++i) {" in header
-    assert "if (extents[i] != static_cast<hsize_t>(data.dims[i])) {" in header
+    assert "const hsize_t declared = static_cast<hsize_t>(data.dims[i]);" in header
+    assert "if (extents[i] != declared) [[unlikely]] {" in header
 
 
 def test_render_hdf5_reader_of_an_unsigned_array() -> None:
@@ -608,7 +610,7 @@ def test_render_hdf5_reader_of_an_unsigned_array() -> None:
     reader = Hdf5Reader(name="read_counts", dataset="Counts")
     header = render_hdf5_reader(reader, dataset)
 
-    assert "if (array.getDataType() != H5::PredType::NATIVE_UINT16) {" in header
+    assert "if (stored != H5::PredType::NATIVE_UINT16) [[unlikely]] {" in header
     assert "H5T_" not in header
 
 
@@ -826,3 +828,70 @@ def test_generate_writes_one_header_per_hdf5_writer(tmp_path: Path) -> None:
     assert '#include "TileData.hpp"' in text
     assert "inline void write_tile_data(H5::H5File& file," in text
     assert "const TileData& data) {" in text
+
+
+def throw_only_ifs_without_the_hint(header: str) -> list[str]:
+    """
+    Return the `if` statements of HEADER that throw without `[[unlikely]]`.
+
+    An `if` counts when the block it opens holds one `throw` and nothing
+    else, which is the shape the templates are asked to annotate.
+    """
+    lines = header.split("\n")
+    missing: list[str] = []
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped.startswith("if (") or not stripped.endswith("{"):
+            continue
+
+        indent = len(line) - len(line.lstrip())
+        end = index + 1
+        while (
+            end < len(lines)
+            and lines[end].strip() != "}"
+            or (
+                end < len(lines)
+                and len(lines[end]) - len(lines[end].lstrip()) != indent
+            )
+        ):
+            end += 1
+            if end >= len(lines):
+                break
+
+        first = index + 1
+        body = " ".join(
+            b.strip()
+            for b in lines[first:end]
+            if b.strip() and not b.strip().startswith("//")
+        )
+        throws_only = body.startswith("throw") and body.count(";") == 1
+        if throws_only and "[[unlikely]]" not in stripped:
+            missing.append(stripped)
+    return missing
+
+
+def test_every_generated_throw_is_marked_unlikely() -> None:
+    """A branch that only throws is annotated in every generated header."""
+    headers = [
+        render_table(TABLE),
+        render_dataset(DATASET),
+        render_csv_reader(READER, TABLE),
+        render_csv_writer(WRITER, TABLE),
+        render_parquet_reader(PARQUET_READER, TABLE),
+        render_parquet_writer(PARQUET_WRITER, TABLE),
+        render_hdf5_reader(HDF5_READER, DATASET),
+        render_hdf5_writer(HDF5_WRITER, DATASET),
+    ]
+
+    for header in headers:
+        assert throw_only_ifs_without_the_hint(header) == []
+
+
+def test_the_hint_is_not_put_on_branches_that_do_more() -> None:
+    """A branch that does something other than throw is left alone."""
+    header = render_csv_reader(READER, TABLE)
+
+    # These return or fall through instead of throwing.
+    assert "if (batch_ == nullptr) {" in header
+    assert 'if (path.ends_with(".gz")) {' in header
+    assert "if (done_) {" in header

@@ -32,7 +32,7 @@ class {{ parquet_writer.name }} {
         int compression_level = arrow::util::kUseDefaultCompressionLevel,
         std::int64_t row_group_length = default_row_group_length)
         : parquet_file_(parquet_file) {
-        if (row_group_length <= 0) {
+        if (row_group_length <= 0) [[unlikely]] {
             throw std::invalid_argument(
                 "row_group_length must be larger than zero");
         }
@@ -67,7 +67,7 @@ class {{ parquet_writer.name }} {
     }
 
     void write_batch(const {{ table.name }}& table) {
-        if (writer_ == nullptr) {
+        if (writer_ == nullptr) [[unlikely]] {
             throw std::runtime_error("'" + parquet_file_ + "' is closed");
         }
 {% for column in table.columns %}
@@ -114,7 +114,7 @@ class {{ parquet_writer.name }} {
 
     // Throw unless status is ok.
     static void check(const arrow::Status& status, const std::string& what) {
-        if (!status.ok()) {
+        if (!status.ok()) [[unlikely]] {
             throw std::runtime_error(what + ": " + status.ToString());
         }
     }
