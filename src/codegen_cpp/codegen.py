@@ -6,6 +6,7 @@ from .spec import (
     Column,
     CsvReader,
     CsvWriter,
+    Dataset,
     DefaultValue,
     ParquetReader,
     ParquetWriter,
@@ -161,6 +162,16 @@ def render_table(table: Table) -> str:
 def table_header_name(table: Table) -> str:
     """Return the file name of the C++ header defining TABLE."""
     return f"{table.name}.hpp"
+
+
+def render_dataset(dataset: Dataset) -> str:
+    """Return the contents of the C++ header defining DATASET."""
+    return ENVIRONMENT.get_template("dataset.hpp.jinja").render(dataset=dataset)
+
+
+def dataset_header_name(dataset: Dataset) -> str:
+    """Return the file name of the C++ header defining DATASET."""
+    return f"{dataset.name}.hpp"
 
 
 def render_csv_reader(csv_reader: CsvReader, table: Table) -> str:

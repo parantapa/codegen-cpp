@@ -9,10 +9,12 @@ from . import __version__
 from .codegen import (
     csv_reader_header_name,
     csv_writer_header_name,
+    dataset_header_name,
     parquet_reader_header_name,
     parquet_writer_header_name,
     render_csv_reader,
     render_csv_writer,
+    render_dataset,
     render_parquet_reader,
     render_parquet_writer,
     render_table,
@@ -54,6 +56,11 @@ def generate(spec_file: Path, output_dir: Path) -> None:
     for table in spec.tables:
         header = output_dir / table_header_name(table)
         header.write_text(render_table(table))
+        console.print(f"Generated [bold]{header}[/bold]", soft_wrap=True)
+
+    for dataset in spec.datasets:
+        header = output_dir / dataset_header_name(dataset)
+        header.write_text(render_dataset(dataset))
         console.print(f"Generated [bold]{header}[/bold]", soft_wrap=True)
 
     tables = {table.name: table for table in spec.tables}

@@ -25,6 +25,26 @@ class ScalarType(Enum):
     str = "str"
 
 
+INTEGER_BITS = {
+    ScalarType.i8: 8,
+    ScalarType.i16: 16,
+    ScalarType.i32: 32,
+    ScalarType.i64: 64,
+    ScalarType.u8: 8,
+    ScalarType.u16: 16,
+    ScalarType.u32: 32,
+    ScalarType.u64: 64,
+}
+
+SIGNED_TYPES = {ScalarType.i8, ScalarType.i16, ScalarType.i32, ScalarType.i64}
+
+FLOAT_TYPES = {ScalarType.f32, ScalarType.f64}
+
+INTEGER_TYPES = set(INTEGER_BITS)
+
+NUMERIC_TYPES = INTEGER_TYPES | FLOAT_TYPES
+
+
 def find_duplicates(names: Iterable[str]) -> list[str]:
     """Return the names that occur more than once, in order of first repeat."""
     seen: set[str] = set()
@@ -59,22 +79,65 @@ class Table(BaseModel):
         return self
 
 
+class NdArray(BaseModel):
+    name: str
+    type: ScalarType
+
+    @model_validator(mode="after")
+    def check_type(self) -> "NdArray":
+        if self.type not in NUMERIC_TYPES:
+            allowed = ", ".join(
+                scalar.value for scalar in ScalarType if scalar in NUMERIC_TYPES
+            )
+            raise ValueError(
+                f"array '{self.name}' has type '{self.type.value}', "
+                f"but an array holds one of: {allowed}"
+            )
+        return self
+
+
+class Dataset(BaseModel):
+    name: str
+    dims: list[str]
+    arrays: list[NdArray]
+
+    # The arrays are stored in column major order,
+    # in which the first dim varies fastest,
+    # unless row_major asks for the last dim to vary fastest instead.
+    row_major: bool = False
+
+    @property
+    def ndim(self) -> int:
+        """Return the rank shared by the arrays of the dataset."""
+        return len(self.dims)
+
+    @model_validator(mode="after")
+    def check_dims(self) -> "Dataset":
+        if not self.dims:
+            raise ValueError(f"dataset '{self.name}' has no dims")
+
+        duplicates = find_duplicates(self.dims)
+        if duplicates:
+            raise ValueError(
+                f"dataset '{self.name}' has duplicate dims: {', '.join(duplicates)}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def check_arrays(self) -> "Dataset":
+        if not self.arrays:
+            raise ValueError(f"dataset '{self.name}' has no arrays")
+
+        duplicates = find_duplicates(array.name for array in self.arrays)
+        if duplicates:
+            raise ValueError(
+                f"dataset '{self.name}' has duplicate arrays: "
+                f"{', '.join(duplicates)}"
+            )
+        return self
+
+
 DefaultValue = bool | int | float | str
-
-INTEGER_BITS = {
-    ScalarType.i8: 8,
-    ScalarType.i16: 16,
-    ScalarType.i32: 32,
-    ScalarType.i64: 64,
-    ScalarType.u8: 8,
-    ScalarType.u16: 16,
-    ScalarType.u32: 32,
-    ScalarType.u64: 64,
-}
-
-SIGNED_TYPES = {ScalarType.i8, ScalarType.i16, ScalarType.i32, ScalarType.i64}
-
-FLOAT_TYPES = {ScalarType.f32, ScalarType.f64}
 
 
 def check_default_value(column: Column, value: DefaultValue) -> str | None:
@@ -149,6 +212,7 @@ class ParquetWriter(TableClass):
 
 class Spec(BaseModel):
     tables: list[Table] = []
+    datasets: list[Dataset] = []
     csv_readers: list[CsvReader] = []
     parquet_readers: list[ParquetReader] = []
     csv_writers: list[CsvWriter] = []
@@ -172,8 +236,9 @@ class Spec(BaseModel):
         """
         errors: list[str] = []
 
-        # Tables and readers share one namespace.
+        # Tables, datasets and readers share one namespace.
         names = [table.name for table in self.tables]
+        names += [dataset.name for dataset in self.datasets]
         names += [generated.name for generated in self.table_classes]
         duplicates = find_duplicates(names)
         if duplicates:
@@ -218,6 +283,7 @@ class Spec(BaseModel):
 
 SECTIONS = {
     "table": "tables",
+    "dataset": "datasets",
     "csv_reader": "csv_readers",
     "parquet_reader": "parquet_readers",
     "csv_writer": "csv_writers",

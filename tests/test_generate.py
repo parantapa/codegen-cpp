@@ -8,6 +8,7 @@ from codegen_cpp.cli import cli
 from codegen_cpp.codegen import (
     render_csv_reader,
     render_csv_writer,
+    render_dataset,
     render_parquet_reader,
     render_parquet_writer,
     render_table,
@@ -16,6 +17,8 @@ from codegen_cpp.spec import (
     Column,
     CsvReader,
     CsvWriter,
+    Dataset,
+    NdArray,
     ParquetReader,
     ParquetWriter,
     ScalarType,
@@ -397,3 +400,106 @@ def test_render_csv_writer_infers_the_compression() -> None:
     assert "compression.value_or(compression_of(csv_file_))" in header
     assert "arrow::util::CodecOptions(compression_level)" in header
     assert "arrow::io::CompressedOutputStream::Make(codec_.get(), output_)" in header
+
+
+NDARRAY_EXAMPLE = Path(__file__).parent.parent / "examples" / "ndarray.toml"
+
+DATASET = Dataset(
+    name="TileData",
+    dims=["row", "col"],
+    arrays=[
+        NdArray(name="burn_time", type=ScalarType.f32),
+        NdArray(name="state", type=ScalarType.i8),
+    ],
+)
+
+
+def test_render_dataset() -> None:
+    """The rendered header defines a struct of mdspans over owned memory."""
+    header = render_dataset(DATASET)
+
+    assert "#pragma once" in header
+    assert "#include <experimental/mdspan>" in header
+    assert "struct TileData {" in header
+    assert "static constexpr std::size_t rank = 2;" in header
+    assert "std::vector<std::size_t> dims;" in header
+
+    # Every array owns its memory and hands out an mdspan over it.
+    assert "std::unique_ptr<float[]> _mem_burn_time;" in header
+    assert "span_type<float> burn_time;" in header
+    assert "std::unique_ptr<std::int8_t[]> _mem_state;" in header
+    assert "span_type<std::int8_t> state;" in header
+
+
+def test_render_dataset_constructor_takes_every_dim() -> None:
+    """The constructor takes one size per dimension and allocates the arrays."""
+    header = render_dataset(DATASET)
+
+    assert "TileData(" in header
+    assert "        std::size_t row," in header
+    assert "        std::size_t col)" in header
+    assert ": dims{row, col}," in header
+    assert "std::make_unique_for_overwrite<float[]>(" in header
+    assert "burn_time(_mem_burn_time.get(), row, col)," in header
+    assert "state(_mem_state.get(), row, col) {" in header
+
+
+def test_render_dataset_is_column_major_by_default() -> None:
+    """Without `row_major` the arrays are stored column major."""
+    header = render_dataset(DATASET)
+
+    assert "std::experimental::layout_left>;" in header
+    assert "stored in column major order" in header
+    assert "so 'row' varies fastest" in header
+    assert "layout_right" not in header
+
+
+def test_render_dataset_row_major() -> None:
+    """With `row_major` the arrays are stored row major."""
+    header = render_dataset(DATASET.model_copy(update={"row_major": True}))
+
+    assert "std::experimental::layout_right>;" in header
+    assert "stored in row major order" in header
+    assert "so 'col' varies fastest" in header
+    assert "layout_left" not in header
+
+
+def test_render_dataset_is_not_copyable() -> None:
+    """A dataset owns its memory, so it may not be copied."""
+    header = render_dataset(DATASET)
+
+    assert "TileData(const TileData&) = delete;" in header
+    assert "TileData& operator=(const TileData&) = delete;" in header
+
+
+def test_render_dataset_of_every_rank() -> None:
+    """The rank of the mdspan follows the number of dims."""
+    for dims in (["tick"], ["row", "col"], ["tick", "row", "col"]):
+        dataset = Dataset(
+            name="D",
+            dims=dims,
+            arrays=[NdArray(name="a", type=ScalarType.f64)],
+        )
+        header = render_dataset(dataset)
+
+        assert f"static constexpr std::size_t rank = {len(dims)};" in header
+        arguments = ", ".join(dims)
+        assert f"a(_mem_a.get(), {arguments}) {{" in header
+
+
+def test_generate_writes_one_header_per_dataset(tmp_path: Path) -> None:
+    """Generate writes a header named after every dataset of the spec."""
+    result = CliRunner().invoke(
+        cli, ["generate", str(NDARRAY_EXAMPLE), "--output-dir", str(tmp_path)]
+    )
+
+    assert result.exit_code == 0, result.output
+
+    for name in ("TickData", "TileData", "SimOutput"):
+        header = tmp_path / f"{name}.hpp"
+        assert header.is_file()
+        assert f"struct {name} {{" in header.read_text()
+
+    # Only TileData asks for row major storage in the example.
+    assert "layout_right" in (tmp_path / "TileData.hpp").read_text()
+    assert "layout_left" in (tmp_path / "SimOutput.hpp").read_text()

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from codegen_cpp.spec import ScalarType, parse_spec
+from codegen_cpp.spec import NUMERIC_TYPES, ScalarType, parse_spec
 
 EXAMPLE = Path(__file__).parent.parent / "examples" / "table1.toml"
 
@@ -61,7 +61,7 @@ def test_parse_csv_readers() -> None:
     assert spec.csv_readers[1].default_values == {}
 
 
-@pytest.mark.parametrize("section", ["table", "csv_reader"])
+@pytest.mark.parametrize("section", ["table", "dataset", "csv_reader"])
 def test_single_table_section_rejected(tmp_path: Path, section: str) -> None:
     """Sections must be arrays of tables; a plain `[section]` is an error."""
     spec_file = tmp_path / "spec.toml"
@@ -84,6 +84,16 @@ name = "t"
 columns = [
     { name = "a", type = "i32" },
     { name = "b", type = "str" },
+]
+"""
+
+GOOD_DATASET = """
+[[dataset]]
+name = "d"
+dims = ["row", "col"]
+arrays = [
+    { name = "x", type = "f32" },
+    { name = "y", type = "i8" },
 ]
 """
 
@@ -216,3 +226,141 @@ def test_annotated_example_uses_every_scalar_type() -> None:
     used = {column.type for table in spec.tables for column in table.columns}
 
     assert used == set(ScalarType)
+
+
+NDARRAY_EXAMPLE = Path(__file__).parent.parent / "examples" / "ndarray.toml"
+
+NUMERIC_TYPES_IN_ORDER = [scalar for scalar in ScalarType if scalar in NUMERIC_TYPES]
+
+
+def test_parse_ndarray_example_spec() -> None:
+    """The bundled n-dimensional array example parses its datasets."""
+    spec = parse_spec(NDARRAY_EXAMPLE)
+
+    assert [dataset.name for dataset in spec.datasets] == [
+        "TickData",
+        "TileData",
+        "SimOutput",
+    ]
+
+    tile_data = spec.datasets[1]
+    assert tile_data.dims == ["row", "col"]
+    assert tile_data.ndim == 2
+    assert [array.name for array in tile_data.arrays] == [
+        "burn_time",
+        "fuel",
+        "moisture",
+        "state",
+    ]
+    assert tile_data.arrays[0].type is ScalarType.f32
+    assert tile_data.arrays[-1].type is ScalarType.i8
+
+    # The rank of a dataset is the number of dims it names.
+    assert [dataset.ndim for dataset in spec.datasets] == [1, 2, 3]
+
+    # Storage is column major unless the dataset asks for row major.
+    assert [dataset.row_major for dataset in spec.datasets] == [False, True, False]
+
+
+def test_dataset_without_dims_rejected(tmp_path: Path) -> None:
+    """A dataset has to name at least one dimension."""
+    spec_file = write_spec(
+        tmp_path,
+        "[[dataset]]\n"
+        'name = "d"\n'
+        "dims = []\n"
+        'arrays = [{ name = "x", type = "f32" }]\n',
+    )
+
+    with pytest.raises(ValidationError, match="dataset 'd' has no dims"):
+        parse_spec(spec_file)
+
+
+def test_dataset_without_arrays_rejected(tmp_path: Path) -> None:
+    """A dataset has to declare at least one array."""
+    spec_file = write_spec(
+        tmp_path,
+        "[[dataset]]\n" 'name = "d"\n' 'dims = ["row"]\n' "arrays = []\n",
+    )
+
+    with pytest.raises(ValidationError, match="dataset 'd' has no arrays"):
+        parse_spec(spec_file)
+
+
+def test_duplicate_dims_rejected(tmp_path: Path) -> None:
+    """A dataset may not name the same dimension twice."""
+    spec_file = write_spec(
+        tmp_path,
+        "[[dataset]]\n"
+        'name = "d"\n'
+        'dims = ["row", "row"]\n'
+        'arrays = [{ name = "x", type = "f32" }]\n',
+    )
+
+    with pytest.raises(ValidationError, match="duplicate dims: row"):
+        parse_spec(spec_file)
+
+
+def test_duplicate_array_names_rejected(tmp_path: Path) -> None:
+    """A dataset may not declare the same array twice."""
+    spec_file = write_spec(
+        tmp_path,
+        "[[dataset]]\n"
+        'name = "d"\n'
+        'dims = ["row"]\n'
+        'arrays = [{ name = "x", type = "f32" },'
+        ' { name = "x", type = "i8" }]\n',
+    )
+
+    with pytest.raises(ValidationError, match="duplicate arrays: x"):
+        parse_spec(spec_file)
+
+
+@pytest.mark.parametrize("scalar", ["bool", "str"])
+def test_non_numeric_array_type_rejected(tmp_path: Path, scalar: str) -> None:
+    """An array holds a number, so `bool` and `str` are not allowed."""
+    spec_file = write_spec(
+        tmp_path,
+        "[[dataset]]\n"
+        'name = "d"\n'
+        'dims = ["row"]\n'
+        f'arrays = [{{ name = "x", type = "{scalar}" }}]\n',
+    )
+
+    with pytest.raises(ValidationError, match=f"array 'x' has type '{scalar}'"):
+        parse_spec(spec_file)
+
+
+def test_every_numeric_type_accepted(tmp_path: Path) -> None:
+    """An array may hold any of the integer and floating point types."""
+    arrays = ", ".join(
+        f'{{ name = "a{index}", type = "{scalar.value}" }}'
+        for index, scalar in enumerate(NUMERIC_TYPES_IN_ORDER)
+    )
+    spec_file = write_spec(
+        tmp_path,
+        "[[dataset]]\n" 'name = "d"\n' 'dims = ["row"]\n' f"arrays = [{arrays}]\n",
+    )
+
+    spec = parse_spec(spec_file)
+
+    assert {array.type for array in spec.datasets[0].arrays} == set(
+        NUMERIC_TYPES_IN_ORDER
+    )
+
+
+def test_duplicate_dataset_names_rejected(tmp_path: Path) -> None:
+    """Two datasets may not share a name."""
+    spec_file = write_spec(tmp_path, GOOD_DATASET + GOOD_DATASET)
+
+    with pytest.raises(ValidationError, match="duplicate table or reader names: d"):
+        parse_spec(spec_file)
+
+
+def test_dataset_and_table_share_one_namespace(tmp_path: Path) -> None:
+    """A dataset may not take the name of a table."""
+    dataset = GOOD_DATASET.replace('name = "d"', 'name = "t"')
+    spec_file = write_spec(tmp_path, GOOD_TABLE + dataset)
+
+    with pytest.raises(ValidationError, match="duplicate table or reader names: t"):
+        parse_spec(spec_file)
