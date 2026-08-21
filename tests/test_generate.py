@@ -406,7 +406,7 @@ def test_render_csv_writer_infers_the_compression() -> None:
     assert "arrow::io::CompressedOutputStream::Make(codec_.get(), output_)" in header
 
 
-NDARRAY_EXAMPLE = Path(__file__).parent.parent / "examples" / "ndarray.toml"
+NDARRAY_EXAMPLE = Path(__file__).parent.parent / "examples" / "ndarray1.toml"
 
 DATASET = Dataset(
     name="TileData",
@@ -499,14 +499,14 @@ def test_generate_writes_one_header_per_dataset(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
 
-    for name in ("TickData", "TileData", "SimOutput"):
+    for name in ("Series", "Raster", "Volume"):
         header = tmp_path / f"{name}.hpp"
         assert header.is_file()
         assert f"struct {name} {{" in header.read_text()
 
-    # Only SimOutput asks for column major storage in the example.
-    assert "layout_right" in (tmp_path / "TileData.hpp").read_text()
-    assert "layout_left" in (tmp_path / "SimOutput.hpp").read_text()
+    # Only Volume asks for column major storage in the example.
+    assert "layout_right" in (tmp_path / "Raster.hpp").read_text()
+    assert "layout_left" in (tmp_path / "Volume.hpp").read_text()
 
 
 HDF5_READER = Hdf5Reader(name="read_tile_data", dataset="TileData")
@@ -688,22 +688,32 @@ def test_generate_writes_one_header_per_hdf5_reader(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert sorted(p.name for p in tmp_path.iterdir()) == [
-        "SimOutput.hpp",
-        "TickData.hpp",
-        "TileData.hpp",
-        "read_seed_data.hpp",
-        "read_tick_data.hpp",
-        "read_tile_data.hpp",
-        "write_tile_data.hpp",
+        "Raster.hpp",
+        "Series.hpp",
+        "Volume.hpp",
+        "read_raster.hpp",
+        "read_raster_layers.hpp",
+        "read_raster_mask.hpp",
+        "read_series.hpp",
+        "read_volume.hpp",
+        "write_raster.hpp",
+        "write_raster_layers.hpp",
+        "write_raster_mask.hpp",
+        "write_series.hpp",
+        "write_volume.hpp",
     ]
 
-    text = (tmp_path / "read_tile_data.hpp").read_text()
-    assert '#include "TileData.hpp"' in text
-    assert "inline void read_tile_data(H5::H5File& file," in text
+    text = (tmp_path / "read_raster.hpp").read_text()
+    assert '#include "Raster.hpp"' in text
+    assert "inline void read_raster(H5::H5File& file," in text
 
-    # 'read_tile_data' excludes 'state' and 'read_seed_data' includes only it.
-    assert "state" not in text
-    assert "burn_time" not in (tmp_path / "read_seed_data.hpp").read_text()
+    # 'read_raster_layers' excludes 'mask' and 'read_raster_mask' has only it.
+    assert "mask" not in (tmp_path / "read_raster_layers.hpp").read_text()
+    assert "elevation" not in (tmp_path / "read_raster_mask.hpp").read_text()
+
+    # Only the reader of the column major dataset lays the elements out again.
+    assert "buffer" in (tmp_path / "read_volume.hpp").read_text()
+    assert "buffer" not in text
 
 
 HDF5_WRITER = Hdf5Writer(name="write_tile_data", dataset="TileData")
@@ -823,11 +833,15 @@ def test_generate_writes_one_header_per_hdf5_writer(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
 
-    header = tmp_path / "write_tile_data.hpp"
+    header = tmp_path / "write_raster.hpp"
     text = header.read_text()
-    assert '#include "TileData.hpp"' in text
-    assert "inline void write_tile_data(H5::H5File& file," in text
-    assert "const TileData& data) {" in text
+    assert '#include "Raster.hpp"' in text
+    assert "inline void write_raster(H5::H5File& file," in text
+    assert "const Raster& data) {" in text
+
+    # The lists narrow a writer the same way they narrow a reader.
+    assert "mask" not in (tmp_path / "write_raster_layers.hpp").read_text()
+    assert "elevation" not in (tmp_path / "write_raster_mask.hpp").read_text()
 
 
 def throw_only_ifs_without_the_hint(header: str) -> list[str]:

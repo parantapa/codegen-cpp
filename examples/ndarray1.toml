@@ -1,0 +1,216 @@
+# An exemplar specification
+# showing the n-dimensional array features of codegen-cpp,
+# and the HDF5 functions that fill those arrays in and write them back out.
+#
+# Generate the C++ headers of this specification with:
+#
+#     codegen-cpp generate examples/ndarray1.toml --output-dir include
+#
+# Every dataset, reader and writer becomes a header of its own name,
+# so `Raster` is written to `Raster.hpp`
+# and `read_raster` to `read_raster.hpp`.
+# All of these names share one namespace and have to be unique,
+# which is why a reader and a writer over the same dataset
+# cannot both be called `raster`.
+#
+# Inspect the parsed specification without generating anything with:
+#
+#     codegen-cpp debug parse-spec examples/ndarray1.toml
+#
+# See `examples/table1.toml` for the row oriented half of the tool:
+# tables, and the CSV and Parquet classes that read and write them.
+
+
+# A dataset is a group of n-dimensional arrays that share one shape.
+# Every dataset needs a name, at least one dim, and at least one array.
+[[dataset]]
+name = "Series"
+
+# `dims` names one dimension per axis,
+# so the number of dims is the rank that every array of the dataset has.
+# The names are documentation and constructor parameter names;
+# the sizes are chosen at run time, not here.
+# This one is a rank one dataset: a plain sequence of samples.
+dims = ["sample"]
+
+# Each array has a name and one of the numeric types:
+#
+#     i8   i16   i32   i64     signed integers
+#     u8   u16   u32   u64     unsigned integers
+#     f32  f64                 floating point numbers
+#
+# `bool` and `str` are allowed in a table but not in a dataset,
+# because an array holds its elements densely and at a fixed size.
+#
+# The array names are used verbatim as C++ member names.
+# Every array gets a `std::unique_ptr` that owns its memory
+# and a `std::experimental::mdspan` of the dataset's rank over it:
+#
+#     Series series(1000);                 // one size per dim
+#     series.value[i] = 1.5;               // C++23 subscript
+#     series.dims[0];                      // 1000
+#     series.size();                       // 1000, the element count
+#
+# The constructor allocates without initializing the elements,
+# so an element has to be written before it is read.
+# A dataset owns its memory and may not be copied.
+arrays = [
+    { name = "timestamp", type = "i64" },
+    { name = "value", type = "f64" },
+    { name = "quality", type = "u16" },
+]
+
+
+# A specification may declare any number of datasets.
+# This one is rank two, so its constructor takes two sizes:
+#
+#     Raster raster(1080, 1920);
+#     raster.elevation[row, col] = 12.5;
+[[dataset]]
+name = "Raster"
+dims = ["row", "col"]
+arrays = [
+    { name = "elevation", type = "f64" },
+    { name = "slope", type = "f32" },
+    { name = "population", type = "u32" },
+    { name = "land_class", type = "u8" },
+    { name = "region_id", type = "i32" },
+    { name = "mask", type = "i8" },
+]
+
+
+# Rank three, and the one option a dataset has.
+#
+# By default the arrays are stored row major,
+# so the last dim varies fastest
+# and the mdspan uses `std::experimental::layout_right`.
+# Setting `column_major` stores them the other way round,
+# so the first dim varies fastest
+# and the mdspan uses `layout_left`.
+# The choice never changes how an element is addressed,
+# only where it sits in memory:
+#
+#     Volume volume(64, 512, 512);
+#     volume.density[level, row, col] = 0.25;   // either way
+[[dataset]]
+name = "Volume"
+dims = ["level", "row", "col"]
+column_major = true
+arrays = [
+    { name = "density", type = "f32" },
+    { name = "sample_count", type = "u64" },
+    { name = "offset", type = "i16" },
+]
+
+
+# An hdf5_reader is a free function
+# that fills in a dataset from a group of an open HDF5 file:
+#
+#     #include <H5Cpp.h>
+#     #include "read_series.hpp"
+#
+#     H5::H5File file("series.h5", H5F_ACC_RDONLY);
+#     Series series(1000);                       // allocated by you
+#     read_series(file, "/run/series", series);
+#
+# The reader fills arrays in rather than sizing them,
+# so `series` is allocated with the shape the group is expected to hold.
+# Inside the group it opens one HDF5 dataset per array,
+# named after the array, here `/run/series/timestamp` and so on.
+#
+# Every one of them has to match exactly:
+# the same rank, the same extent along every dimension,
+# and the same datatype,
+# which is compared against the predefined type of the array,
+# so the class, the size, the signedness and the byte order all have to agree.
+# Anything that goes wrong is reported as a `std::runtime_error`,
+# including a missing group or array,
+# a shape or a datatype that does not match,
+# and any failure reported by HDF5 itself.
+#
+# The generated header declares nothing but this one function,
+# so the headers of several readers and writers may be included together.
+[[hdf5_reader]]
+name = "read_series"
+dataset = "Series"
+
+# Without `include` or `exclude` every array of the dataset is read.
+[[hdf5_reader]]
+name = "read_raster"
+dataset = "Raster"
+
+# `include` reads only the arrays it names and leaves the rest alone,
+# which is how one group can be read in more than one pass.
+# The arrays that are skipped keep whatever the caller put in them,
+# and they may be absent from the group altogether.
+#
+# A list that is given may not be empty,
+# may only name arrays of the dataset it refers to,
+# and may not name the same array twice.
+[[hdf5_reader]]
+name = "read_raster_mask"
+dataset = "Raster"
+include = ["mask"]
+
+# `exclude` is the other way round: it reads every array it does not name.
+# Declaring both lists is an error,
+# and so is a reader left with no array to read at all.
+[[hdf5_reader]]
+name = "read_raster_layers"
+dataset = "Raster"
+exclude = ["mask"]
+
+# A reader over a column major dataset looks the same from the outside.
+# The relayout described above happens inside it.
+[[hdf5_reader]]
+name = "read_volume"
+dataset = "Volume"
+
+
+# An hdf5_writer is the mirror image,
+# and takes the dataset by const reference:
+#
+#     H5::H5File file("series.h5", H5F_ACC_TRUNC);
+#     write_series(file, "/run/series", series);
+#
+# The group is created if it is not there yet,
+# together with any group above it that is missing,
+# so writing into `/run/series` of an empty file works.
+# The file has to be open for writing;
+# a read-only file is reported like any other failure.
+#
+# Every array is written with the datatype the dataset declares
+# and the shape the dataset was allocated with,
+# which is exactly what the matching reader expects to find,
+# so a writer and a reader over the same dataset round trip.
+[[hdf5_writer]]
+name = "write_series"
+dataset = "Series"
+
+# Writing into a group that already holds these arrays is not an error.
+# An array of the same name is replaced,
+# whatever shape and datatype it was stored with.
+# Note that HDF5 does not hand the space of the replaced array back to the file,
+# so a program that writes the same group over and over grows the file each time.
+[[hdf5_writer]]
+name = "write_raster"
+dataset = "Raster"
+
+# `include` and `exclude` mean the same thing for a writer as for a reader,
+# and follow the same rules.
+# A writer that includes one array
+# leaves the other arrays of the group untouched,
+# so a group can be built up, or refreshed, one part at a time.
+[[hdf5_writer]]
+name = "write_raster_mask"
+dataset = "Raster"
+include = ["mask"]
+
+[[hdf5_writer]]
+name = "write_raster_layers"
+dataset = "Raster"
+exclude = ["mask"]
+
+[[hdf5_writer]]
+name = "write_volume"
+dataset = "Volume"

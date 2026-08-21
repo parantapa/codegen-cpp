@@ -237,7 +237,7 @@ def test_annotated_example_uses_every_scalar_type() -> None:
     assert used == set(ScalarType)
 
 
-NDARRAY_EXAMPLE = Path(__file__).parent.parent / "examples" / "ndarray.toml"
+NDARRAY_EXAMPLE = Path(__file__).parent.parent / "examples" / "ndarray1.toml"
 
 NUMERIC_TYPES_IN_ORDER = [scalar for scalar in ScalarType if scalar in NUMERIC_TYPES]
 
@@ -247,22 +247,24 @@ def test_parse_ndarray_example_spec() -> None:
     spec = parse_spec(NDARRAY_EXAMPLE)
 
     assert [dataset.name for dataset in spec.datasets] == [
-        "TickData",
-        "TileData",
-        "SimOutput",
+        "Series",
+        "Raster",
+        "Volume",
     ]
 
-    tile_data = spec.datasets[1]
-    assert tile_data.dims == ["row", "col"]
-    assert tile_data.ndim == 2
-    assert [array.name for array in tile_data.arrays] == [
-        "burn_time",
-        "fuel",
-        "moisture",
-        "state",
+    raster = spec.datasets[1]
+    assert raster.dims == ["row", "col"]
+    assert raster.ndim == 2
+    assert [array.name for array in raster.arrays] == [
+        "elevation",
+        "slope",
+        "population",
+        "land_class",
+        "region_id",
+        "mask",
     ]
-    assert tile_data.arrays[0].type is ScalarType.f32
-    assert tile_data.arrays[-1].type is ScalarType.i8
+    assert raster.arrays[0].type is ScalarType.f64
+    assert raster.arrays[-1].type is ScalarType.i8
 
     # The rank of a dataset is the number of dims it names.
     assert [dataset.ndim for dataset in spec.datasets] == [1, 2, 3]
@@ -273,6 +275,14 @@ def test_parse_ndarray_example_spec() -> None:
         False,
         True,
     ]
+
+
+def test_ndarray_example_uses_every_numeric_type() -> None:
+    """The example declares an array of every type a dataset may hold."""
+    spec = parse_spec(NDARRAY_EXAMPLE)
+    used = {array.type for dataset in spec.datasets for array in dataset.arrays}
+
+    assert used == NUMERIC_TYPES
 
 
 def test_dataset_without_dims_rejected(tmp_path: Path) -> None:
@@ -396,19 +406,21 @@ def test_parse_hdf5_readers() -> None:
     spec = parse_spec(NDARRAY_EXAMPLE)
 
     assert [reader.name for reader in spec.hdf5_readers] == [
-        "read_tick_data",
-        "read_tile_data",
-        "read_seed_data",
+        "read_series",
+        "read_raster",
+        "read_raster_mask",
+        "read_raster_layers",
+        "read_volume",
     ]
 
     # Without include or exclude every array of the dataset is read.
-    tick = spec.hdf5_readers[0]
-    assert tick.dataset == "TickData"
-    assert tick.include is None
-    assert tick.exclude is None
+    series = spec.hdf5_readers[0]
+    assert series.dataset == "Series"
+    assert series.include is None
+    assert series.exclude is None
 
-    assert spec.hdf5_readers[1].exclude == ["state"]
-    assert spec.hdf5_readers[2].include == ["state"]
+    assert spec.hdf5_readers[2].include == ["mask"]
+    assert spec.hdf5_readers[3].exclude == ["mask"]
 
 
 def test_selected_arrays_without_include_or_exclude() -> None:
@@ -426,19 +438,21 @@ def test_selected_arrays_with_include() -> None:
     dataset = spec.datasets[1]
     reader = spec.hdf5_readers[2]
 
-    assert [array.name for array in selected_arrays(dataset, reader)] == ["state"]
+    assert [array.name for array in selected_arrays(dataset, reader)] == ["mask"]
 
 
 def test_selected_arrays_with_exclude() -> None:
     """An exclude list drops the arrays it names and keeps the rest."""
     spec = parse_spec(NDARRAY_EXAMPLE)
     dataset = spec.datasets[1]
-    reader = spec.hdf5_readers[1]
+    reader = spec.hdf5_readers[3]
 
     assert [array.name for array in selected_arrays(dataset, reader)] == [
-        "burn_time",
-        "fuel",
-        "moisture",
+        "elevation",
+        "slope",
+        "population",
+        "land_class",
+        "region_id",
     ]
 
 
@@ -606,24 +620,31 @@ def test_parse_hdf5_writers() -> None:
     """The bundled n-dimensional array example parses its HDF5 writers."""
     spec = parse_spec(NDARRAY_EXAMPLE)
 
-    assert [writer.name for writer in spec.hdf5_writers] == ["write_tile_data"]
+    assert [writer.name for writer in spec.hdf5_writers] == [
+        "write_series",
+        "write_raster",
+        "write_raster_mask",
+        "write_raster_layers",
+        "write_volume",
+    ]
 
     writer = spec.hdf5_writers[0]
-    assert writer.dataset == "TileData"
+    assert writer.dataset == "Series"
     assert writer.include is None
     assert writer.exclude is None
+
+    # The lists mean the same thing for a writer as for a reader.
+    assert spec.hdf5_writers[2].include == ["mask"]
+    assert spec.hdf5_writers[3].exclude == ["mask"]
 
 
 def test_hdf5_classes_hold_the_readers_and_the_writers() -> None:
     """Readers and writers share the checks that apply to both."""
     spec = parse_spec(NDARRAY_EXAMPLE)
 
-    assert [c.KIND for c in spec.hdf5_classes] == [
-        "hdf5_reader",
-        "hdf5_reader",
-        "hdf5_reader",
-        "hdf5_writer",
-    ]
+    assert [c.KIND for c in spec.hdf5_classes] == ["hdf5_reader"] * 5 + [
+        "hdf5_writer"
+    ] * 5
 
 
 def test_selected_arrays_of_a_writer() -> None:
