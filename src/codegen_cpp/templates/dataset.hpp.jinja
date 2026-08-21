@@ -11,12 +11,12 @@
 
 #include <experimental/mdspan>
 
-{%- set layout = "layout_right" if dataset.row_major else "layout_left" %}
-{%- set fastest = dataset.dims[-1] if dataset.row_major else dataset.dims[0] %}
+{%- set layout = "layout_left" if dataset.column_major else "layout_right" %}
+{%- set fastest = dataset.dims[0] if dataset.column_major else dataset.dims[-1] %}
 
 // The arrays of the dataset '{{ dataset.name }}',
 // which all have the shape ({{ dataset.dims | join(", ") }})
-// and are stored in {{ "row" if dataset.row_major else "column" }} major order,
+// and are stored in {{ "column" if dataset.column_major else "row" }} major order,
 // so '{{ fastest }}' varies fastest.
 struct {{ dataset.name }} {
     static constexpr std::size_t rank = {{ dataset.ndim }};

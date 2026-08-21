@@ -3,11 +3,20 @@
 from codegen_cpp.codegen import (
     CPP_TYPES,
     ENVIRONMENT,
+    HDF5_NATIVE_TYPES,
     cpp_literal,
     cpp_type,
+    hdf5_native_type,
     required_columns,
 )
-from codegen_cpp.spec import Column, CsvReader, ScalarType, Table
+from codegen_cpp.spec import (
+    NUMERIC_TYPES,
+    Column,
+    CsvReader,
+    ScalarType,
+    Table,
+    selected_arrays,
+)
 
 
 def test_every_scalar_type_is_mapped() -> None:
@@ -81,3 +90,28 @@ def test_cpp_literal_escapes_strings() -> None:
     assert cpp_literal('a"b', ScalarType.str) == 'std::string("a\\"b")'
     assert cpp_literal("a\\b", ScalarType.str) == 'std::string("a\\\\b")'
     assert cpp_literal("a\nb", ScalarType.str) == 'std::string("a\\nb")'
+
+
+def test_every_numeric_type_has_an_hdf5_spelling() -> None:
+    """Every type that an array may hold maps to an HDF5 predefined type."""
+    assert set(HDF5_NATIVE_TYPES) == NUMERIC_TYPES
+
+
+def test_hdf5_native_type() -> None:
+    """Arrays are read with the predefined type of the running machine."""
+    assert hdf5_native_type(ScalarType.i8) == "H5::PredType::NATIVE_INT8"
+    assert hdf5_native_type(ScalarType.u32) == "H5::PredType::NATIVE_UINT32"
+    assert hdf5_native_type(ScalarType.f32) == "H5::PredType::NATIVE_FLOAT"
+    assert hdf5_native_type(ScalarType.f64) == "H5::PredType::NATIVE_DOUBLE"
+
+
+def test_hdf5_native_type_distinguishes_the_integers() -> None:
+    """Size and signedness are carried by the predefined type itself."""
+    assert hdf5_native_type(ScalarType.i16) != hdf5_native_type(ScalarType.u16)
+    assert hdf5_native_type(ScalarType.i16) != hdf5_native_type(ScalarType.i32)
+    assert hdf5_native_type(ScalarType.f32) != hdf5_native_type(ScalarType.f64)
+
+
+def test_selected_arrays_is_a_filter() -> None:
+    """The filter is registered on the environment used by the templates."""
+    assert ENVIRONMENT.filters["selected_arrays"] is selected_arrays

@@ -1,5 +1,6 @@
 [requires]
 arrow/25.0.1
+hdf5/1.14.6
 mdspan/0.6.0
 
 [options]
@@ -9,6 +10,7 @@ arrow/*:with_thrift=True
 arrow/*:with_snappy=True
 arrow/*:with_zlib=True
 arrow/*:with_zstd=True
+hdf5/*:enable_cxx=True
 
 [generators]
 CMakeDeps

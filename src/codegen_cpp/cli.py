@@ -10,11 +10,13 @@ from .codegen import (
     csv_reader_header_name,
     csv_writer_header_name,
     dataset_header_name,
+    hdf5_reader_header_name,
     parquet_reader_header_name,
     parquet_writer_header_name,
     render_csv_reader,
     render_csv_writer,
     render_dataset,
+    render_hdf5_reader,
     render_parquet_reader,
     render_parquet_writer,
     render_table,
@@ -86,6 +88,15 @@ def generate(spec_file: Path, output_dir: Path) -> None:
         header = output_dir / parquet_writer_header_name(parquet_writer)
         header.write_text(
             render_parquet_writer(parquet_writer, tables[parquet_writer.table])
+        )
+        console.print(f"Generated [bold]{header}[/bold]", soft_wrap=True)
+
+    datasets = {dataset.name: dataset for dataset in spec.datasets}
+
+    for hdf5_reader in spec.hdf5_readers:
+        header = output_dir / hdf5_reader_header_name(hdf5_reader)
+        header.write_text(
+            render_hdf5_reader(hdf5_reader, datasets[hdf5_reader.dataset])
         )
         console.print(f"Generated [bold]{header}[/bold]", soft_wrap=True)
 

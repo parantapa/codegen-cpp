@@ -101,10 +101,10 @@ class Dataset(BaseModel):
     dims: list[str]
     arrays: list[NdArray]
 
-    # The arrays are stored in column major order,
-    # in which the first dim varies fastest,
-    # unless row_major asks for the last dim to vary fastest instead.
-    row_major: bool = False
+    # The arrays are stored in row major order,
+    # in which the last dim varies fastest,
+    # unless column_major asks for the first dim to vary fastest instead.
+    column_major: bool = False
 
     @property
     def ndim(self) -> int:
@@ -210,6 +210,62 @@ class ParquetWriter(TableClass):
     KIND: ClassVar[str] = "parquet_writer"
 
 
+class DatasetClass(BaseModel):
+    """The fields shared by every C++ function generated for a dataset."""
+
+    KIND: ClassVar[str] = "dataset class"
+
+    name: str
+    dataset: str
+
+
+class Hdf5Reader(DatasetClass):
+    """A function reading the arrays of a dataset out of an HDF5 group."""
+
+    KIND: ClassVar[str] = "hdf5_reader"
+
+    include: list[str] | None = None
+    exclude: list[str] | None = None
+
+    @model_validator(mode="after")
+    def check_include_and_exclude(self) -> "Hdf5Reader":
+        if self.include is not None and self.exclude is not None:
+            raise ValueError(
+                f"{self.KIND} '{self.name}' lists both include and exclude"
+            )
+
+        for kind, names in (("include", self.include), ("exclude", self.exclude)):
+            if names is None:
+                continue
+            if not names:
+                raise ValueError(f"{self.KIND} '{self.name}' has an empty {kind} list")
+            duplicates = find_duplicates(names)
+            if duplicates:
+                raise ValueError(
+                    f"{self.KIND} '{self.name}' has duplicate {kind} arrays: "
+                    f"{', '.join(duplicates)}"
+                )
+        return self
+
+
+def selected_arrays(dataset: Dataset, reader: Hdf5Reader) -> list[NdArray]:
+    """
+    Return the arrays of DATASET that READER reads, in declaration order.
+
+    The include and exclude lists of the reader select them;
+    without either one every array of the dataset is read.
+    """
+    if reader.include is not None:
+        included = set(reader.include)
+        return [array for array in dataset.arrays if array.name in included]
+
+    if reader.exclude is not None:
+        excluded = set(reader.exclude)
+        return [array for array in dataset.arrays if array.name not in excluded]
+
+    return list(dataset.arrays)
+
+
 class Spec(BaseModel):
     tables: list[Table] = []
     datasets: list[Dataset] = []
@@ -217,6 +273,7 @@ class Spec(BaseModel):
     parquet_readers: list[ParquetReader] = []
     csv_writers: list[CsvWriter] = []
     parquet_writers: list[ParquetWriter] = []
+    hdf5_readers: list[Hdf5Reader] = []
 
     @property
     def readers(self) -> list[Reader]:
@@ -227,6 +284,11 @@ class Spec(BaseModel):
     def table_classes(self) -> list[TableClass]:
         """Return every class generated for a table of the specification."""
         return [*self.readers, *self.csv_writers, *self.parquet_writers]
+
+    @property
+    def dataset_classes(self) -> list[DatasetClass]:
+        """Return everything generated for a dataset of the specification."""
+        return [*self.hdf5_readers]
 
     @model_validator(mode="after")
     def check_references(self) -> "Spec":
@@ -240,6 +302,7 @@ class Spec(BaseModel):
         names = [table.name for table in self.tables]
         names += [dataset.name for dataset in self.datasets]
         names += [generated.name for generated in self.table_classes]
+        names += [generated.name for generated in self.dataset_classes]
         duplicates = find_duplicates(names)
         if duplicates:
             errors.append(f"duplicate table or reader names: {', '.join(duplicates)}")
@@ -276,6 +339,40 @@ class Spec(BaseModel):
                         f"for column '{name}' that {reason}"
                     )
 
+        datasets = {dataset.name: dataset for dataset in self.datasets}
+        for generated in self.dataset_classes:
+            if generated.dataset not in datasets:
+                errors.append(
+                    f"{generated.KIND} '{generated.name}' refers to "
+                    f"undefined dataset '{generated.dataset}'"
+                )
+
+        for hdf5_reader in self.hdf5_readers:
+            dataset = datasets.get(hdf5_reader.dataset)
+            if dataset is None:
+                continue
+
+            declared = {array.name for array in dataset.arrays}
+            for kind, listed in (
+                ("include", hdf5_reader.include),
+                ("exclude", hdf5_reader.exclude),
+            ):
+                if listed is None:
+                    continue
+                unknown = [name for name in listed if name not in declared]
+                if unknown:
+                    errors.append(
+                        f"{hdf5_reader.KIND} '{hdf5_reader.name}' lists {kind} "
+                        f"arrays not in dataset '{dataset.name}': "
+                        f"{', '.join(unknown)}"
+                    )
+
+            if not selected_arrays(dataset, hdf5_reader):
+                errors.append(
+                    f"{hdf5_reader.KIND} '{hdf5_reader.name}' reads no array "
+                    f"of dataset '{dataset.name}'"
+                )
+
         if errors:
             raise ValueError("; ".join(errors))
         return self
@@ -288,6 +385,7 @@ SECTIONS = {
     "parquet_reader": "parquet_readers",
     "csv_writer": "csv_writers",
     "parquet_writer": "parquet_writers",
+    "hdf5_reader": "hdf5_readers",
 }
 
 

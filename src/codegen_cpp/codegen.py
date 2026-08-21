@@ -8,11 +8,13 @@ from .spec import (
     CsvWriter,
     Dataset,
     DefaultValue,
+    Hdf5Reader,
     ParquetReader,
     ParquetWriter,
     Reader,
     ScalarType,
     Table,
+    selected_arrays,
 )
 
 CPP_TYPES = {
@@ -78,6 +80,23 @@ ARROW_BUILDER_TYPES = {
 }
 
 
+# The HDF5 predefined types describing the memory that an array is read into.
+# They name the layout of the running machine,
+# so the library converts the byte order of the file while it reads.
+HDF5_NATIVE_TYPES = {
+    ScalarType.i8: "H5::PredType::NATIVE_INT8",
+    ScalarType.i16: "H5::PredType::NATIVE_INT16",
+    ScalarType.i32: "H5::PredType::NATIVE_INT32",
+    ScalarType.i64: "H5::PredType::NATIVE_INT64",
+    ScalarType.u8: "H5::PredType::NATIVE_UINT8",
+    ScalarType.u16: "H5::PredType::NATIVE_UINT16",
+    ScalarType.u32: "H5::PredType::NATIVE_UINT32",
+    ScalarType.u64: "H5::PredType::NATIVE_UINT64",
+    ScalarType.f32: "H5::PredType::NATIVE_FLOAT",
+    ScalarType.f64: "H5::PredType::NATIVE_DOUBLE",
+}
+
+
 def cpp_type(type: ScalarType) -> str:
     """Return the C++ type used to represent TYPE."""
     return CPP_TYPES[type]
@@ -96,6 +115,11 @@ def arrow_array_type(type: ScalarType) -> str:
 def arrow_builder_type(type: ScalarType) -> str:
     """Return the Arrow builder class building a column of TYPE."""
     return ARROW_BUILDER_TYPES[type]
+
+
+def hdf5_native_type(type: ScalarType) -> str:
+    """Return the HDF5 predefined type of the memory holding TYPE."""
+    return HDF5_NATIVE_TYPES[type]
 
 
 def required_columns(table: Table, reader: Reader) -> list[Column]:
@@ -147,6 +171,8 @@ def make_environment() -> Environment:
     env.filters["arrow_array_type"] = arrow_array_type
     env.filters["arrow_builder_type"] = arrow_builder_type
     env.filters["required_columns"] = required_columns
+    env.filters["selected_arrays"] = selected_arrays
+    env.filters["hdf5_native_type"] = hdf5_native_type
     env.filters["cpp_literal"] = cpp_literal
     return env
 
@@ -232,3 +258,18 @@ def render_parquet_writer(parquet_writer: ParquetWriter, table: Table) -> str:
 def parquet_writer_header_name(parquet_writer: ParquetWriter) -> str:
     """Return the file name of the C++ header defining PARQUET_WRITER."""
     return f"{parquet_writer.name}.hpp"
+
+
+def render_hdf5_reader(hdf5_reader: Hdf5Reader, dataset: Dataset) -> str:
+    """
+    Return the contents of the C++ header defining HDF5_READER.
+
+    DATASET is the dataset that HDF5_READER fills in.
+    """
+    template = ENVIRONMENT.get_template("hdf5_reader.hpp.jinja")
+    return template.render(hdf5_reader=hdf5_reader, dataset=dataset)
+
+
+def hdf5_reader_header_name(hdf5_reader: Hdf5Reader) -> str:
+    """Return the file name of the C++ header defining HDF5_READER."""
+    return f"{hdf5_reader.name}.hpp"

@@ -9,6 +9,7 @@ from codegen_cpp.codegen import (
     render_csv_reader,
     render_csv_writer,
     render_dataset,
+    render_hdf5_reader,
     render_parquet_reader,
     render_parquet_writer,
     render_table,
@@ -18,6 +19,7 @@ from codegen_cpp.spec import (
     CsvReader,
     CsvWriter,
     Dataset,
+    Hdf5Reader,
     NdArray,
     ParquetReader,
     ParquetWriter,
@@ -444,24 +446,24 @@ def test_render_dataset_constructor_takes_every_dim() -> None:
     assert "state(_mem_state.get(), row, col) {" in header
 
 
-def test_render_dataset_is_column_major_by_default() -> None:
-    """Without `row_major` the arrays are stored column major."""
+def test_render_dataset_is_row_major_by_default() -> None:
+    """Without `column_major` the arrays are stored row major."""
     header = render_dataset(DATASET)
-
-    assert "std::experimental::layout_left>;" in header
-    assert "stored in column major order" in header
-    assert "so 'row' varies fastest" in header
-    assert "layout_right" not in header
-
-
-def test_render_dataset_row_major() -> None:
-    """With `row_major` the arrays are stored row major."""
-    header = render_dataset(DATASET.model_copy(update={"row_major": True}))
 
     assert "std::experimental::layout_right>;" in header
     assert "stored in row major order" in header
     assert "so 'col' varies fastest" in header
     assert "layout_left" not in header
+
+
+def test_render_dataset_column_major() -> None:
+    """With `column_major` the arrays are stored column major."""
+    header = render_dataset(DATASET.model_copy(update={"column_major": True}))
+
+    assert "std::experimental::layout_left>;" in header
+    assert "stored in column major order" in header
+    assert "so 'row' varies fastest" in header
+    assert "layout_right" not in header
 
 
 def test_render_dataset_is_not_copyable() -> None:
@@ -500,6 +502,200 @@ def test_generate_writes_one_header_per_dataset(tmp_path: Path) -> None:
         assert header.is_file()
         assert f"struct {name} {{" in header.read_text()
 
-    # Only TileData asks for row major storage in the example.
+    # Only SimOutput asks for column major storage in the example.
     assert "layout_right" in (tmp_path / "TileData.hpp").read_text()
     assert "layout_left" in (tmp_path / "SimOutput.hpp").read_text()
+
+
+HDF5_READER = Hdf5Reader(name="read_tile_data", dataset="TileData")
+
+
+def test_render_hdf5_reader() -> None:
+    """The rendered header defines a function over the dataset header."""
+    header = render_hdf5_reader(HDF5_READER, DATASET)
+
+    assert "#pragma once" in header
+    assert "#include <H5Cpp.h>" in header
+    assert '#include "TileData.hpp"' in header
+    assert "inline void read_tile_data(H5::H5File& file," in header
+    assert "const std::string& group_path," in header
+    assert "TileData& data) {" in header
+    assert "const H5::Group group = file.openGroup(group_path);" in header
+
+
+def test_render_hdf5_reader_declares_nothing_but_the_function() -> None:
+    """The macros expand in place, so the header holds one function."""
+    header = render_hdf5_reader(HDF5_READER, DATASET)
+
+    # Everything else is a comment, an include, or indented inside the body.
+    top_level = [
+        line
+        for line in header.splitlines()
+        if line and not line.startswith((" ", "}", "#", "//"))
+    ]
+    assert len(top_level) == 1
+    assert top_level[0].startswith("inline void read_tile_data(")
+
+    assert "namespace" not in header
+    assert "template" not in header
+
+
+def test_render_hdf5_reader_reads_every_array_by_default() -> None:
+    """Without include or exclude every array of the dataset is read."""
+    header = render_hdf5_reader(HDF5_READER, DATASET)
+
+    assert 'const std::string path = group_path + "/burn_time";' in header
+    assert 'const std::string path = group_path + "/state";' in header
+    assert 'if (!group.nameExists("burn_time")) {' in header
+    assert 'const H5::DataSet array = group.openDataSet("state");' in header
+
+
+def test_render_hdf5_reader_include() -> None:
+    """An include list reads only the arrays it names."""
+    reader = Hdf5Reader(name="read_seed", dataset="TileData", include=["state"])
+    header = render_hdf5_reader(reader, DATASET)
+
+    assert 'const std::string path = group_path + "/state";' in header
+    assert "burn_time" not in header
+    assert "// Read the array state" in header
+
+
+def test_render_hdf5_reader_exclude() -> None:
+    """An exclude list reads every array it does not name."""
+    reader = Hdf5Reader(name="read_rest", dataset="TileData", exclude=["state"])
+    header = render_hdf5_reader(reader, DATASET)
+
+    assert 'const std::string path = group_path + "/burn_time";' in header
+    assert "state" not in header
+
+
+def test_render_hdf5_reader_pins_the_datatypes() -> None:
+    """Every array is checked against the predefined type it declares."""
+    header = render_hdf5_reader(HDF5_READER, DATASET)
+
+    assert "if (array.getDataType() != H5::PredType::NATIVE_FLOAT) {" in header
+    assert "if (array.getDataType() != H5::PredType::NATIVE_INT8) {" in header
+    assert "\"' is not stored as 'f32'\");" in header
+    assert "\"' is not stored as 'i8'\");" in header
+
+    # One comparison covers every property, so none is spelled out by hand.
+    assert "H5T_" not in header
+    assert "getClass()" not in header
+    assert "getSign()" not in header
+
+
+def test_render_hdf5_reader_checks_the_shape() -> None:
+    """The rank and every extent are checked against the allocated dataset."""
+    header = render_hdf5_reader(HDF5_READER, DATASET)
+
+    assert "const H5::DataSpace space = array.getSpace();" in header
+    assert "if (space.getSimpleExtentNdims() != 2) {" in header
+    assert "std::array<hsize_t, TileData::rank> extents;" in header
+    assert "space.getSimpleExtentDims(extents.data());" in header
+    assert "for (std::size_t i = 0; i < TileData::rank; ++i) {" in header
+    assert "if (extents[i] != static_cast<hsize_t>(data.dims[i])) {" in header
+
+
+def test_render_hdf5_reader_of_an_unsigned_array() -> None:
+    """An unsigned array is checked against the unsigned predefined type."""
+    dataset = Dataset(
+        name="Counts",
+        dims=["row"],
+        arrays=[NdArray(name="hits", type=ScalarType.u16)],
+    )
+    reader = Hdf5Reader(name="read_counts", dataset="Counts")
+    header = render_hdf5_reader(reader, dataset)
+
+    assert "if (array.getDataType() != H5::PredType::NATIVE_UINT16) {" in header
+    assert "H5T_" not in header
+
+
+def test_render_hdf5_reader_reports_errors_as_runtime_errors() -> None:
+    """Everything that goes wrong is reported as a std::runtime_error."""
+    header = render_hdf5_reader(HDF5_READER, DATASET)
+
+    assert "} catch (const H5::Exception& e) {" in header
+    assert 'throw std::runtime_error("failed to read \'" + group_path + "\': " +' in (
+        header
+    )
+    assert '"\' is not in the HDF5 file");' in header
+
+
+def test_render_hdf5_reader_of_a_row_major_dataset_reads_in_place() -> None:
+    """A row major dataset is stored the way HDF5 reads, so it reads directly."""
+    header = render_hdf5_reader(HDF5_READER, DATASET)
+
+    assert "array.read(data._mem_burn_time.get()," in header
+    assert "H5::PredType::NATIVE_FLOAT);" in header
+    assert "buffer" not in header
+    assert "#include <vector>" not in header
+
+
+def test_render_hdf5_reader_of_a_column_major_dataset_lays_out_again() -> None:
+    """A column major dataset of rank two or more is laid out after reading."""
+    header = render_hdf5_reader(
+        HDF5_READER, DATASET.model_copy(update={"column_major": True})
+    )
+
+    assert "#include <vector>" in header
+    assert "std::vector<float> buffer(data.size());" in header
+    assert "array.read(buffer.data(), H5::PredType::NATIVE_FLOAT);" in header
+    assert "std::size_t element = 0;" in header
+    assert "for (std::size_t i0 = 0; i0 < data.dims[0]; ++i0) {" in header
+    assert "for (std::size_t i1 = 0; i1 < data.dims[1]; ++i1) {" in header
+    assert "data.burn_time[i0, i1] = buffer[element++];" in header
+
+
+def test_render_hdf5_reader_unrolls_the_loops_of_every_rank() -> None:
+    """The rank is known when the header is written, so the loops are unrolled."""
+    dataset = Dataset(
+        name="SimOutput",
+        dims=["tick", "row", "col"],
+        arrays=[NdArray(name="state", type=ScalarType.i8)],
+        column_major=True,
+    )
+    reader = Hdf5Reader(name="read_sim_output", dataset="SimOutput")
+    header = render_hdf5_reader(reader, dataset)
+
+    assert "for (std::size_t i2 = 0; i2 < data.dims[2]; ++i2) {" in header
+    assert "data.state[i0, i1, i2] = buffer[element++];" in header
+    assert "for (std::size_t i3" not in header
+
+
+def test_render_hdf5_reader_of_a_one_dimensional_dataset_reads_in_place() -> None:
+    """Rank one is the same either way, so it reads directly."""
+    dataset = Dataset(
+        name="TickData",
+        dims=["tick"],
+        arrays=[NdArray(name="wind_speed", type=ScalarType.f32)],
+    )
+    reader = Hdf5Reader(name="read_tick_data", dataset="TickData")
+    header = render_hdf5_reader(reader, dataset)
+
+    assert "array.read(data._mem_wind_speed.get()," in header
+    assert "buffer" not in header
+
+
+def test_generate_writes_one_header_per_hdf5_reader(tmp_path: Path) -> None:
+    """Generate writes a header named after every HDF5 reader of the spec."""
+    result = CliRunner().invoke(
+        cli, ["generate", str(NDARRAY_EXAMPLE), "--output-dir", str(tmp_path)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "SimOutput.hpp",
+        "TickData.hpp",
+        "TileData.hpp",
+        "read_seed_data.hpp",
+        "read_tick_data.hpp",
+        "read_tile_data.hpp",
+    ]
+
+    text = (tmp_path / "read_tile_data.hpp").read_text()
+    assert '#include "TileData.hpp"' in text
+    assert "inline void read_tile_data(H5::H5File& file," in text
+
+    # 'read_tile_data' excludes 'state' and 'read_seed_data' includes only it.
+    assert "state" not in text
+    assert "burn_time" not in (tmp_path / "read_seed_data.hpp").read_text()

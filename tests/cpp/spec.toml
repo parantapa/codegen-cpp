@@ -26,3 +26,39 @@ table = "Point"
 [[parquet_writer]]
 name = "PointParquetWriter"
 table = "Point"
+
+[[dataset]]
+name = "Grid"
+dims = ["row", "col"]
+arrays = [
+    { name = "temperature", type = "f64" },
+    { name = "kind", type = "i32" },
+    { name = "count", type = "u16" },
+]
+
+[[dataset]]
+name = "Field"
+dims = ["x", "y", "z"]
+arrays = [
+    { name = "value", type = "f32" },
+    { name = "tag", type = "i8" },
+]
+column_major = true
+
+[[hdf5_reader]]
+name = "read_grid"
+dataset = "Grid"
+
+[[hdf5_reader]]
+name = "read_grid_temperature"
+dataset = "Grid"
+include = ["temperature"]
+
+[[hdf5_reader]]
+name = "read_grid_labels"
+dataset = "Grid"
+exclude = ["temperature"]
+
+[[hdf5_reader]]
+name = "read_field"
+dataset = "Field"
