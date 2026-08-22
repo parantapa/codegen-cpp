@@ -237,14 +237,14 @@ def test_annotated_example_uses_every_scalar_type() -> None:
     assert used == set(ScalarType)
 
 
-NDARRAY_EXAMPLE = Path(__file__).parent.parent / "examples" / "ndarray1.toml"
+DATASET_EXAMPLE = Path(__file__).parent.parent / "examples" / "dataset1.toml"
 
 NUMERIC_TYPES_IN_ORDER = [scalar for scalar in ScalarType if scalar in NUMERIC_TYPES]
 
 
-def test_parse_ndarray_example_spec() -> None:
+def test_parse_dataset_example_spec() -> None:
     """The bundled n-dimensional array example parses its datasets."""
-    spec = parse_spec(NDARRAY_EXAMPLE)
+    spec = parse_spec(DATASET_EXAMPLE)
 
     assert [dataset.name for dataset in spec.datasets] == [
         "Series",
@@ -277,9 +277,9 @@ def test_parse_ndarray_example_spec() -> None:
     ]
 
 
-def test_ndarray_example_uses_every_numeric_type() -> None:
+def test_dataset_example_uses_every_numeric_type() -> None:
     """The example declares an array of every type a dataset may hold."""
-    spec = parse_spec(NDARRAY_EXAMPLE)
+    spec = parse_spec(DATASET_EXAMPLE)
     used = {array.type for dataset in spec.datasets for array in dataset.arrays}
 
     assert used == NUMERIC_TYPES
@@ -403,7 +403,7 @@ arrays = [
 
 def test_parse_hdf5_readers() -> None:
     """The bundled n-dimensional array example parses its HDF5 readers."""
-    spec = parse_spec(NDARRAY_EXAMPLE)
+    spec = parse_spec(DATASET_EXAMPLE)
 
     assert [reader.name for reader in spec.hdf5_readers] == [
         "read_series",
@@ -425,7 +425,7 @@ def test_parse_hdf5_readers() -> None:
 
 def test_selected_arrays_without_include_or_exclude() -> None:
     """A reader that lists neither reads every array, in declaration order."""
-    spec = parse_spec(NDARRAY_EXAMPLE)
+    spec = parse_spec(DATASET_EXAMPLE)
     dataset = spec.datasets[0]
     reader = spec.hdf5_readers[0]
 
@@ -434,7 +434,7 @@ def test_selected_arrays_without_include_or_exclude() -> None:
 
 def test_selected_arrays_with_include() -> None:
     """An include list keeps only the arrays it names."""
-    spec = parse_spec(NDARRAY_EXAMPLE)
+    spec = parse_spec(DATASET_EXAMPLE)
     dataset = spec.datasets[1]
     reader = spec.hdf5_readers[2]
 
@@ -443,7 +443,7 @@ def test_selected_arrays_with_include() -> None:
 
 def test_selected_arrays_with_exclude() -> None:
     """An exclude list drops the arrays it names and keeps the rest."""
-    spec = parse_spec(NDARRAY_EXAMPLE)
+    spec = parse_spec(DATASET_EXAMPLE)
     dataset = spec.datasets[1]
     reader = spec.hdf5_readers[3]
 
@@ -618,7 +618,7 @@ def test_column_major_is_kept(tmp_path: Path) -> None:
 
 def test_parse_hdf5_writers() -> None:
     """The bundled n-dimensional array example parses its HDF5 writers."""
-    spec = parse_spec(NDARRAY_EXAMPLE)
+    spec = parse_spec(DATASET_EXAMPLE)
 
     assert [writer.name for writer in spec.hdf5_writers] == [
         "write_series",
@@ -640,7 +640,7 @@ def test_parse_hdf5_writers() -> None:
 
 def test_hdf5_classes_hold_the_readers_and_the_writers() -> None:
     """Readers and writers share the checks that apply to both."""
-    spec = parse_spec(NDARRAY_EXAMPLE)
+    spec = parse_spec(DATASET_EXAMPLE)
 
     assert [c.KIND for c in spec.hdf5_classes] == ["hdf5_reader"] * 5 + [
         "hdf5_writer"

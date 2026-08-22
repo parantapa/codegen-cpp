@@ -4,7 +4,7 @@
 #
 # Generate the C++ headers of this specification with:
 #
-#     codegen-cpp generate examples/ndarray1.toml --output-dir include
+#     codegen-cpp generate examples/dataset1.toml --output-dir include
 #
 # Every dataset, reader and writer becomes a header of its own name,
 # so `Raster` is written to `Raster.hpp`
@@ -15,7 +15,7 @@
 #
 # Inspect the parsed specification without generating anything with:
 #
-#     codegen-cpp debug parse-spec examples/ndarray1.toml
+#     codegen-cpp debug parse-spec examples/dataset1.toml
 #
 # See `examples/table1.toml` for the row oriented half of the tool:
 # tables, and the CSV and Parquet classes that read and write them.

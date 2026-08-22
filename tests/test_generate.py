@@ -406,7 +406,7 @@ def test_render_csv_writer_infers_the_compression() -> None:
     assert "arrow::io::CompressedOutputStream::Make(codec_.get(), output_)" in header
 
 
-NDARRAY_EXAMPLE = Path(__file__).parent.parent / "examples" / "ndarray1.toml"
+DATASET_EXAMPLE = Path(__file__).parent.parent / "examples" / "dataset1.toml"
 
 DATASET = Dataset(
     name="TileData",
@@ -494,7 +494,7 @@ def test_render_dataset_of_every_rank() -> None:
 def test_generate_writes_one_header_per_dataset(tmp_path: Path) -> None:
     """Generate writes a header named after every dataset of the spec."""
     result = CliRunner().invoke(
-        cli, ["generate", str(NDARRAY_EXAMPLE), "--output-dir", str(tmp_path)]
+        cli, ["generate", str(DATASET_EXAMPLE), "--output-dir", str(tmp_path)]
     )
 
     assert result.exit_code == 0, result.output
@@ -683,7 +683,7 @@ def test_render_hdf5_reader_of_a_one_dimensional_dataset_reads_in_place() -> Non
 def test_generate_writes_one_header_per_hdf5_reader(tmp_path: Path) -> None:
     """Generate writes a header named after every HDF5 reader of the spec."""
     result = CliRunner().invoke(
-        cli, ["generate", str(NDARRAY_EXAMPLE), "--output-dir", str(tmp_path)]
+        cli, ["generate", str(DATASET_EXAMPLE), "--output-dir", str(tmp_path)]
     )
 
     assert result.exit_code == 0, result.output
@@ -828,7 +828,7 @@ def test_render_hdf5_writer_reports_errors_as_runtime_errors() -> None:
 def test_generate_writes_one_header_per_hdf5_writer(tmp_path: Path) -> None:
     """Generate writes a header named after every HDF5 writer of the spec."""
     result = CliRunner().invoke(
-        cli, ["generate", str(NDARRAY_EXAMPLE), "--output-dir", str(tmp_path)]
+        cli, ["generate", str(DATASET_EXAMPLE), "--output-dir", str(tmp_path)]
     )
 
     assert result.exit_code == 0, result.output
