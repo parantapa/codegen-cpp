@@ -11,15 +11,7 @@
 
 #include <H5Cpp.h>
 
-#include "Field.hpp"
-#include "Grid.hpp"
-#include "read_field.hpp"
-#include "read_grid.hpp"
-#include "read_grid_labels.hpp"
-#include "read_grid_temperature.hpp"
-#include "write_field.hpp"
-#include "write_grid.hpp"
-#include "write_grid_temperature.hpp"
+#include "datasets.hpp"
 
 namespace {
 

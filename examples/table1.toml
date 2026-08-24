@@ -1,12 +1,13 @@
 # An exemplar specification showing features of codegen-cpp.
 #
-# Generate the C++ headers of this specification with:
+# Generate the C++ header of this specification with:
 #
-#     codegen-cpp generate examples/table1.toml --output-dir include
+#     codegen-cpp generate examples/table1.toml
 #
-# Every table and every reader or writer becomes a header of its own name,
-# so `Measurement` is written to `Measurement.hpp`.
-# All of these names share one namespace and have to be unique.
+# Every table and every reader or writer is defined
+# in the single header this writes, `examples/table1.hpp`.
+# All of their names share one namespace and have to be unique.
+# Pass `--output-file` to write the header somewhere else.
 #
 # Inspect the parsed specification without generating anything with:
 #

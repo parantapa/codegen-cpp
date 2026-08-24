@@ -2,16 +2,16 @@
 # showing the n-dimensional array features of codegen-cpp,
 # and the HDF5 functions that fill those arrays in and write them back out.
 #
-# Generate the C++ headers of this specification with:
+# Generate the C++ header of this specification with:
 #
-#     codegen-cpp generate examples/dataset1.toml --output-dir include
+#     codegen-cpp generate examples/dataset1.toml
 #
-# Every dataset, reader and writer becomes a header of its own name,
-# so `Raster` is written to `Raster.hpp`
-# and `read_raster` to `read_raster.hpp`.
-# All of these names share one namespace and have to be unique,
+# Every dataset, reader and writer is defined
+# in the single header this writes, `examples/dataset1.hpp`.
+# All of their names share one namespace and have to be unique,
 # which is why a reader and a writer over the same dataset
 # cannot both be called `raster`.
+# Pass `--output-file` to write the header somewhere else.
 #
 # Inspect the parsed specification without generating anything with:
 #
@@ -106,8 +106,7 @@ arrays = [
 # An hdf5_reader is a free function
 # that fills in a dataset from a group of an open HDF5 file:
 #
-#     #include <H5Cpp.h>
-#     #include "read_series.hpp"
+#     #include "dataset1.hpp"
 #
 #     H5::H5File file("series.h5", H5F_ACC_RDONLY);
 #     Series series(1000);                       // allocated by you
@@ -128,8 +127,8 @@ arrays = [
 # a shape or a datatype that does not match,
 # and any failure reported by HDF5 itself.
 #
-# The generated header declares nothing but this one function,
-# so the headers of several readers and writers may be included together.
+# A reader contributes nothing but this one function to the header,
+# so any number of readers and writers may share it.
 [[hdf5_reader]]
 name = "read_series"
 dataset = "Series"

@@ -11,41 +11,36 @@ find_program(
     REQUIRED
 )
 
-set(SPEC "${CMAKE_CURRENT_SOURCE_DIR}/spec.toml")
 set(GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
-set(GENERATED_HEADERS
-    "${GENERATED_DIR}/Point.hpp"
-    "${GENERATED_DIR}/PointCsvReader.hpp"
-    "${GENERATED_DIR}/PointParquetReader.hpp"
-    "${GENERATED_DIR}/PointCsvWriter.hpp"
-    "${GENERATED_DIR}/PointParquetWriter.hpp"
-    "${GENERATED_DIR}/Grid.hpp"
-    "${GENERATED_DIR}/Field.hpp"
-    "${GENERATED_DIR}/read_grid.hpp"
-    "${GENERATED_DIR}/read_grid_temperature.hpp"
-    "${GENERATED_DIR}/read_grid_labels.hpp"
-    "${GENERATED_DIR}/read_field.hpp"
-    "${GENERATED_DIR}/write_grid.hpp"
-    "${GENERATED_DIR}/write_grid_temperature.hpp"
-    "${GENERATED_DIR}/write_field.hpp"
-)
 
-# Regenerate whenever the specification or one of the templates changes.
+# Regenerate whenever a specification or one of the templates changes.
 file(GLOB TEMPLATES
      "${CMAKE_CURRENT_SOURCE_DIR}/../../src/codegen_cpp/templates/*.jinja")
 
-add_custom_command(
-    OUTPUT ${GENERATED_HEADERS}
-    COMMAND "${CODEGEN_CPP}" generate "${SPEC}" --output-dir "${GENERATED_DIR}"
-    DEPENDS "${SPEC}" ${TEMPLATES}
-    COMMENT "Generating C++ headers from ${SPEC}"
-    VERBATIM
-)
+# Each specification becomes a single header named after it.
+# The tables and the datasets are kept apart
+# so that each test only pulls in the library it is linked against.
+function(add_generated_header name)
+    set(spec "${CMAKE_CURRENT_SOURCE_DIR}/${name}.toml")
+    set(header "${GENERATED_DIR}/${name}.hpp")
 
-add_custom_target(generated_headers DEPENDS ${GENERATED_HEADERS})
+    add_custom_command(
+        OUTPUT "${header}"
+        COMMAND "${CODEGEN_CPP}" generate "${spec}" --output-file "${header}"
+        DEPENDS "${spec}" ${TEMPLATES}
+        COMMENT "Generating ${header} from ${spec}"
+        VERBATIM
+    )
 
-add_executable(test_readers test_readers.cpp ${GENERATED_HEADERS})
-add_dependencies(test_readers generated_headers)
+    add_custom_target(${name}_header DEPENDS "${header}")
+    set(${name}_HEADER "${header}" PARENT_SCOPE)
+endfunction()
+
+add_generated_header(tables)
+add_generated_header(datasets)
+
+add_executable(test_readers test_readers.cpp "${tables_HEADER}")
+add_dependencies(test_readers tables_header)
 
 target_include_directories(test_readers PRIVATE "${GENERATED_DIR}")
 target_compile_features(test_readers PRIVATE cxx_std_23)
@@ -54,8 +49,8 @@ target_link_libraries(
     test_readers PRIVATE Arrow::arrow_static Parquet::parquet_static
 )
 
-add_executable(test_hdf5 test_hdf5.cpp ${GENERATED_HEADERS})
-add_dependencies(test_hdf5 generated_headers)
+add_executable(test_hdf5 test_hdf5.cpp "${datasets_HEADER}")
+add_dependencies(test_hdf5 datasets_header)
 
 target_include_directories(test_hdf5 PRIVATE "${GENERATED_DIR}")
 target_compile_features(test_hdf5 PRIVATE cxx_std_23)

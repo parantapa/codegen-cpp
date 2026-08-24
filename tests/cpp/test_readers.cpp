@@ -15,11 +15,7 @@
 #include <parquet/arrow/reader.h>
 #include <parquet/arrow/writer.h>
 
-#include "Point.hpp"
-#include "PointCsvReader.hpp"
-#include "PointCsvWriter.hpp"
-#include "PointParquetReader.hpp"
-#include "PointParquetWriter.hpp"
+#include "tables.hpp"
 
 namespace {
 

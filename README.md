@@ -47,22 +47,27 @@ name = "MeasurementParquetWriter"
 table = "Measurement"
 ```
 
-Generate the headers:
+Generate the header:
 
 ```bash
-codegen-cpp generate spec.toml --output-dir include
+codegen-cpp generate spec.toml
 ```
 
-This writes one header per section, named after the section:
-`include/Measurement.hpp`,
-`include/MeasurementCsvReader.hpp`,
-and `include/MeasurementParquetWriter.hpp`.
+This writes every section of the specification into a single header,
+`spec.hpp`, sitting next to the specification it was generated from.
+`--output-file` (`-o`) writes it somewhere else instead:
 
-Use them to convert a CSV file into a Parquet file:
+```bash
+codegen-cpp generate spec.toml --output-file include/measurements.hpp
+```
+
+The directories of the output file are created if they are missing,
+and an output file that is already there is overwritten.
+
+Use the header to convert a CSV file into a Parquet file:
 
 ```cpp
-#include "MeasurementCsvReader.hpp"
-#include "MeasurementParquetWriter.hpp"
+#include "spec.hpp"
 
 int main() {
     MeasurementCsvReader reader("measurements.csv.gz", 100000);
@@ -109,8 +114,7 @@ and so on.
 | `hdf5_writer`    | a function writing a dataset into an HDF5 group |
 
 Every section has a `name`,
-which is used verbatim as the name of the generated class
-and of the header file holding it.
+which is used verbatim as the name of the generated class or function.
 The names of all sections share one namespace and have to be unique.
 Every reader and writer of a table names the `table`
 it reads into or writes out,
@@ -160,7 +164,16 @@ and so is a reader or writer left with no array at all.
 
 ## The generated code
 
-For a table called `Measurement`, `Measurement.hpp` defines the struct `Measurement`,
+The whole specification is generated into one header,
+which opens with the headers that its sections need between them,
+listed once each,
+the standard library first and the libraries it binds to after it.
+The definitions follow in an order
+in which each one is declared after everything it names,
+so the tables and the datasets lead
+and the classes and functions over them follow.
+
+A `table` called `Measurement` becomes the struct `Measurement`,
 which holds the rows column by column, one `std::vector` per column.
 Its nested struct `Measurement::row_type` holds a single row by value:
 
@@ -199,7 +212,7 @@ which is what `size()` reports.
 because the rows are not stored as rows.
 
 For a dataset called `TileData` with dims `row` and `col`,
-`TileData.hpp` defines a struct holding one array per declared array.
+the generated struct holds one array per declared array.
 Each is a `std::unique_ptr` owning the memory
 and a `std::experimental::mdspan` of the dataset's rank giving access to it:
 
@@ -282,9 +295,8 @@ Passing a codec explicitly overrides the guess.
 Parquet files carry their compression inside them,
 so the Parquet reader needs no such argument.
 
-For an `hdf5_reader` called `read_tile_data` over the dataset `TileData`,
-`read_tile_data.hpp` defines one free function,
-over `<H5Cpp.h>` and the header of the dataset:
+An `hdf5_reader` called `read_tile_data` over the dataset `TileData`
+becomes one free function over `<H5Cpp.h>` and the struct of the dataset:
 
 ```cpp
 inline void read_tile_data(H5::H5File& file, const std::string& group_path,
@@ -323,8 +335,7 @@ the rank is known when the header is written,
 so the loops that move them are written out one per dimension.
 
 An `hdf5_writer` is its mirror image.
-For one called `write_tile_data` over the same dataset,
-`write_tile_data.hpp` defines:
+One called `write_tile_data` over the same dataset becomes:
 
 ```cpp
 inline void write_tile_data(H5::H5File& file, const std::string& group_path,
@@ -351,9 +362,9 @@ on the way out, the same way the reader lays them out on the way in.
 The file has to be open for writing;
 a read-only file is reported like any other failure.
 
-The header of a reader or a writer declares nothing but its one function:
+A reader or a writer contributes nothing but its one function:
 the checks and the transfer are written out in place for every array,
-so the headers of several of them can be included together.
+so any number of them can share a header.
 The generated code does not call `H5::Exception::dontPrint()`,
 so HDF5 keeps printing its own errors to standard error
 unless the program asks it to stop.
@@ -374,7 +385,7 @@ checked with `pycodestyle` and `pyright`.
 
 ## Testing the generated C++ code
 
-The tests under `tests/cpp` generate headers,
+The tests under `tests/cpp` generate a header per specification,
 write CSV and Parquet files with Arrow
 and HDF5 files with both the HDF5 C++ API and the generated writers,
 and read them back with the generated readers.
