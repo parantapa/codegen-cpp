@@ -42,7 +42,7 @@ class {{ parquet_writer.name }} {
         try {
             close();
         } catch (...) {
-            // A destructor cannot report the failure of close();
+            {#- A destructor cannot report the failure of close(); #}
         }
     }
 
@@ -85,14 +85,14 @@ class {{ parquet_writer.name }} {
     }
 
   private:
-    // Throw unless result holds a value, and return the value it holds.
+    {# Throw unless result holds a value, and return the value it holds. -#}
     template <typename T>
     static T unwrap(arrow::Result<T> result, const std::string& what) {
         check(result.status(), what);
         return std::move(result).ValueOrDie();
     }
 
-    // Throw unless status is ok.
+    {# Throw unless status is ok. -#}
     static void check(const arrow::Status& status, const std::string& what) {
         if (!status.ok()) [[unlikely]] {
             throw std::runtime_error(what + ": " + status.ToString());
@@ -102,8 +102,8 @@ class {{ parquet_writer.name }} {
     std::string parquet_file_;
     std::shared_ptr<arrow::Schema> schema_;
 
-    // The stream has to outlive the writer using it,
-    // so it is declared first and destroyed last.
+    {# The stream has to outlive the writer using it,
+       so it is declared first and destroyed last. -#}
     std::shared_ptr<arrow::io::OutputStream> output_;
     std::unique_ptr<parquet::arrow::FileWriter> writer_;
 };

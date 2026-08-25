@@ -25,7 +25,7 @@ class {{ csv_writer.name }} {
                     codec_type, arrow::util::CodecOptions(compression_level)),
                 "failed to compress '" + csv_file_ + "'");
 
-            // Closing this stream closes the file it writes to.
+            {# Closing this stream closes the file it writes to. -#}
             output_ = unwrap(
                 arrow::io::CompressedOutputStream::Make(codec_.get(), output_),
                 "failed to compress '" + csv_file_ + "'");
@@ -38,7 +38,7 @@ class {{ csv_writer.name }} {
         try {
             close();
         } catch (...) {
-            // A destructor cannot report the failure of close();
+            {#- A destructor cannot report the failure of close(); #}
         }
     }
 
@@ -82,7 +82,7 @@ class {{ csv_writer.name }} {
     }
 
   private:
-    // Return the codec that a file of this name is compressed with.
+    {# Return the codec that a file of this name is compressed with. -#}
     static arrow::Compression::type compression_of(const std::string& path) {
         if (path.ends_with(".gz")) {
             return arrow::Compression::GZIP;
@@ -99,14 +99,14 @@ class {{ csv_writer.name }} {
         return arrow::Compression::UNCOMPRESSED;
     }
 
-    // Throw unless result holds a value, and return the value it holds.
+    {# Throw unless result holds a value, and return the value it holds. -#}
     template <typename T>
     static T unwrap(arrow::Result<T> result, const std::string& what) {
         check(result.status(), what);
         return std::move(result).ValueOrDie();
     }
 
-    // Throw unless status is ok.
+    {# Throw unless status is ok. -#}
     static void check(const arrow::Status& status, const std::string& what) {
         if (!status.ok()) [[unlikely]] {
             throw std::runtime_error(what + ": " + status.ToString());
@@ -116,12 +116,12 @@ class {{ csv_writer.name }} {
     std::string csv_file_;
     std::shared_ptr<arrow::Schema> schema_;
 
-    // The codec has to outlive the stream compressing with it,
-    // so it is declared first and destroyed last.
+    {# The codec has to outlive the stream compressing with it,
+       so it is declared first and destroyed last. -#}
     std::unique_ptr<arrow::util::Codec> codec_;
 
-    // The stream has to outlive the writer using it,
-    // so it is declared first and destroyed last.
+    {# The stream has to outlive the writer using it,
+       so it is declared first and destroyed last. -#}
     std::shared_ptr<arrow::io::OutputStream> output_;
     std::shared_ptr<arrow::ipc::RecordBatchWriter> writer_;
 };

@@ -54,8 +54,8 @@ class {{ csv_reader.name }} {
         auto parse_options = arrow::csv::ParseOptions::Defaults();
         auto convert_options = arrow::csv::ConvertOptions::Defaults();
 
-        // Read only the columns of '{{ table.name }}', in the order
-        // in which they are declared, and with their declared types.
+        {# Read only the columns of the table, in the order
+           in which they are declared, and with their declared types. -#}
         convert_options.include_columns = {
 {%- for column in table.columns %}
             "{{ column.name }}",
@@ -116,7 +116,7 @@ class {{ csv_reader.name }} {
     }
 
   private:
-    // Return the codec that a file of this name is compressed with.
+    {# Return the codec that a file of this name is compressed with. -#}
     static arrow::Compression::type compression_of(const std::string& path) {
         if (path.ends_with(".gz")) {
             return arrow::Compression::GZIP;
@@ -133,22 +133,22 @@ class {{ csv_reader.name }} {
         return arrow::Compression::UNCOMPRESSED;
     }
 
-    // Throw unless result holds a value, and return the value it holds.
+    {# Throw unless result holds a value, and return the value it holds. -#}
     template <typename T>
     static T unwrap(arrow::Result<T> result, const std::string& what) {
         check(result.status(), what);
         return std::move(result).ValueOrDie();
     }
 
-    // Throw unless status is ok.
+    {# Throw unless status is ok. -#}
     static void check(const arrow::Status& status, const std::string& what) {
         if (!status.ok()) [[unlikely]] {
             throw std::runtime_error(what + ": " + status.ToString());
         }
     }
 
-    // Make batch_ point at a batch with at least one unread row,
-    // or at nullptr once the CSV file has been read completely.
+    {# Make batch_ point at a batch with at least one unread row,
+       or at nullptr once the CSV file has been read completely. -#}
     void fill_batch() {
         while (batch_ == nullptr || offset_ >= batch_->num_rows()) {
             if (done_) {
@@ -172,7 +172,7 @@ class {{ csv_reader.name }} {
         }
     }
 
-    // Throw if a column that is not nullable contains a null value.
+    {# Throw if a column that is not nullable contains a null value. -#}
     static void check_nulls(
 {%- if required %}const arrow::RecordBatch& batch) {
 {%- for column in table.columns %}
@@ -190,15 +190,15 @@ class {{ csv_reader.name }} {
     std::string csv_file_;
     std::size_t batch_size_;
 
-    // The codec has to outlive the stream decompressing with it,
-    // so it is declared first and destroyed last.
+    {# The codec has to outlive the stream decompressing with it,
+       so it is declared first and destroyed last. -#}
     std::unique_ptr<arrow::util::Codec> codec_;
     std::shared_ptr<arrow::csv::StreamingReader> reader_;
 
-    // The batch being read, and the index of its first unread row.
+    {# The batch being read, and the index of its first unread row. -#}
     std::shared_ptr<arrow::RecordBatch> batch_;
     std::int64_t offset_ = 0;
 
-    // Set once the streaming reader has returned its last batch.
+    {# Set once the streaming reader has returned its last batch. -#}
     bool done_ = false;
 };

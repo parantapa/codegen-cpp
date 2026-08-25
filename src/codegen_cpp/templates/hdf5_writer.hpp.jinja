@@ -1,7 +1,7 @@
 {%- set arrays = dataset | selected_arrays(hdf5_writer) -%}
 {%- set direct = not dataset.column_major or dataset.ndim == 1 -%}
 {%- macro create_array(nd_array) %}
-            // Replace whatever the group holds under this name already.
+            {# Replace whatever the group holds under this name already. -#}
             if (group.nameExists("{{ nd_array.name }}")) {
                 group.unlink("{{ nd_array.name }}");
             }
@@ -13,14 +13,14 @@
 {%- set cpp = nd_array.type | cpp_type %}
 {%- set native = nd_array.type | hdf5_native_type %}
 {%- if direct %}
-            // '{{ dataset.name }}' stores its arrays the way HDF5 writes them,
-            // so the elements go out as they are.
+            {# The dataset stores its arrays the way HDF5 writes them,
+               so the elements go out as they are. -#}
             array.write(data._mem_{{ nd_array.name }}.get(),
                         {{ native }});
 {%- else %}
-            // HDF5 writes the elements in row major order,
-            // but '{{ dataset.name }}' stores them in column major order,
-            // so they are gathered one at a time first.
+            {# HDF5 writes the elements in row major order,
+               but the dataset stores them in column major order,
+               so they are gathered one at a time first. -#}
             std::vector<{{ cpp }}> buffer(data.size());
 
             std::size_t element = 0;
@@ -50,8 +50,9 @@
 inline void {{ hdf5_writer.name }}(H5::H5File& file, const std::string& group_path,
 {{ " " * (hdf5_writer.name | length + 13) }}const {{ dataset.name }}& data) {
     try {
-        // Walk the path one name at a time, so that a group that is missing
-        // is created instead of looked for below a group that is missing too.
+        {# Walk the path one name at a time,
+           so that a group that is missing is created
+           instead of looked for below a group that is missing too. -#}
         H5::Group group = file.openGroup("/");
         for (std::size_t begin = 0; begin <= group_path.size();) {
             const std::size_t end = group_path.find('/', begin);
@@ -67,8 +68,8 @@ inline void {{ hdf5_writer.name }}(H5::H5File& file, const std::string& group_pa
             begin = end + 1;
         }
 
-        // Every array of '{{ dataset.name }}' has the shape that data was
-        // allocated with, so one dataspace describes all of them.
+        {# Every array of the dataset has the shape that data was
+           allocated with, so one dataspace describes all of them. -#}
         std::array<hsize_t, {{ dataset.name }}::rank> extents;
         for (std::size_t i = 0; i < {{ dataset.name }}::rank; ++i) {
             extents[i] = static_cast<hsize_t>(data.dims[i]);

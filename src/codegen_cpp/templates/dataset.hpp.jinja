@@ -52,8 +52,8 @@ struct {{ dataset.name }} {
     }
 
   private:
-    // Return the number of elements of an array with the given shape,
-    // and throw unless that number fits in a std::size_t.
+    {# Return the number of elements of an array with the given shape,
+       and throw unless that number fits in a std::size_t. -#}
     static std::size_t checked_size(
 {%- for dim in dataset.dims %}
         std::size_t {{ dim }}{% if not loop.last %},{% endif %}

@@ -35,8 +35,8 @@ class {{ parquet_reader.name }} {
         auto input = unwrap(arrow::io::ReadableFile::Open(parquet_file_),
                             "failed to open '" + parquet_file_ + "'");
 
-        // Read the file through a buffer of buffer_size bytes,
-        // instead of one read per column chunk.
+        {# Read the file through a buffer of buffer_size bytes,
+           instead of one read per column chunk. -#}
         parquet::ReaderProperties reader_properties(arrow::default_memory_pool());
         reader_properties.enable_buffered_stream();
         reader_properties.set_buffer_size(buffer_size);
@@ -53,8 +53,8 @@ class {{ parquet_reader.name }} {
         check(reader_->GetSchema(&schema),
               "failed to read the schema of '" + parquet_file_ + "'");
 
-        // Read only the columns of '{{ table.name }}', in the order
-        // in which they are declared.
+        {# Read only the columns of the table, in the order
+           in which they are declared. -#}
         const std::vector<int> columns = {
 {%- for column in table.columns %}
             field_index(*schema, "{{ column.name }}", {{ column.type | arrow_type }}),
@@ -113,22 +113,22 @@ class {{ parquet_reader.name }} {
     }
 
   private:
-    // Throw unless result holds a value, and return the value it holds.
+    {# Throw unless result holds a value, and return the value it holds. -#}
     template <typename T>
     static T unwrap(arrow::Result<T> result, const std::string& what) {
         check(result.status(), what);
         return std::move(result).ValueOrDie();
     }
 
-    // Throw unless status is ok.
+    {# Throw unless status is ok. -#}
     static void check(const arrow::Status& status, const std::string& what) {
         if (!status.ok()) [[unlikely]] {
             throw std::runtime_error(what + ": " + status.ToString());
         }
     }
 
-    // Return the position of the column called name in schema,
-    // and throw unless it is stored with the expected type.
+    {# Return the position of the column called name in schema,
+       and throw unless it is stored with the expected type. -#}
     int field_index(const arrow::Schema& schema, const std::string& name,
                     const std::shared_ptr<arrow::DataType>& type) const {
         const int index = schema.GetFieldIndex(name);
@@ -146,8 +146,8 @@ class {{ parquet_reader.name }} {
         return index;
     }
 
-    // Throw unless the batches hold the columns of '{{ table.name }}',
-    // in the order in which they are declared.
+    {# Throw unless the batches hold the columns of the table,
+       in the order in which they are declared. -#}
     void check_schema(const arrow::Schema& schema) const {
         if (schema.num_fields() != {{ table.columns | length }}) [[unlikely]] {
             throw std::runtime_error("'" + parquet_file_ +
@@ -161,8 +161,8 @@ class {{ parquet_reader.name }} {
 {%- endfor %}
     }
 
-    // Make batch_ point at a batch with at least one unread row,
-    // or at nullptr once the Parquet file has been read completely.
+    {# Make batch_ point at a batch with at least one unread row,
+       or at nullptr once the Parquet file has been read completely. -#}
     void fill_batch() {
         while (batch_ == nullptr || offset_ >= batch_->num_rows()) {
             if (done_) {
@@ -186,7 +186,7 @@ class {{ parquet_reader.name }} {
         }
     }
 
-    // Throw if a column that is not nullable contains a null value.
+    {# Throw if a column that is not nullable contains a null value. -#}
     void check_nulls(
 {%- if required %}const arrow::RecordBatch& batch) const {
 {%- for column in table.columns %}
@@ -203,15 +203,15 @@ class {{ parquet_reader.name }} {
 
     std::string parquet_file_;
     std::size_t batch_size_;
-    // The file reader has to outlive the record batch reader it returns,
-    // so it is declared first and destroyed last.
+    {# The file reader has to outlive the record batch reader it returns,
+       so it is declared first and destroyed last. -#}
     std::unique_ptr<parquet::arrow::FileReader> reader_;
     std::unique_ptr<arrow::RecordBatchReader> batches_;
 
-    // The batch being read, and the index of its first unread row.
+    {# The batch being read, and the index of its first unread row. -#}
     std::shared_ptr<arrow::RecordBatch> batch_;
     std::int64_t offset_ = 0;
 
-    // Set once the record batch reader has returned its last batch.
+    {# Set once the record batch reader has returned its last batch. -#}
     bool done_ = false;
 };

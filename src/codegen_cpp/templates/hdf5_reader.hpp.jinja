@@ -40,14 +40,14 @@
 {%- set cpp = nd_array.type | cpp_type %}
 {%- set native = nd_array.type | hdf5_native_type %}
 {%- if direct %}
-            // '{{ dataset.name }}' stores its arrays the way HDF5 reads them,
-            // so the elements land where they belong.
+            {# The dataset stores its arrays the way HDF5 reads them,
+               so the elements land where they belong. -#}
             array.read(data._mem_{{ nd_array.name }}.get(),
                        {{ native }});
 {%- else %}
-            // HDF5 reads the elements in row major order,
-            // but '{{ dataset.name }}' stores them in column major order,
-            // so they are put in place one at a time.
+            {# HDF5 reads the elements in row major order,
+               but the dataset stores them in column major order,
+               so they are put in place one at a time. -#}
             std::vector<{{ cpp }}> buffer(data.size());
             array.read(buffer.data(), {{ native }});
 
