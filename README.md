@@ -265,10 +265,16 @@ and table writers take one batch at a time:
 ```cpp
 bool has_more_batches();       // readers
 Table read_batch();            // readers, at most batch_size rows
+Table read_all();              // readers, every row that is left
 
 void write_batch(const Table& table);  // writers
 void close();                          // writers
 ```
+
+`read_all()` reads the whole file into one table,
+however many rows that takes,
+and the two may be mixed:
+`read_all()` returns what the calls to `read_batch()` before it left.
 
 A writer replaces the file it opens if it already exists.
 `close()` writes out what is left and releases the file;

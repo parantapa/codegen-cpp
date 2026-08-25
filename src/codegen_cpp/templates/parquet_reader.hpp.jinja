@@ -88,25 +88,24 @@ class {{ parquet_reader.name }} {
             if (batch_ == nullptr) {
                 break;
             }
+            append_rows(table,
+                        static_cast<std::int64_t>(batch_size_ - table.size()));
+        }
 
-            const std::int64_t available = batch_->num_rows() - offset_;
-            const std::int64_t wanted =
-                static_cast<std::int64_t>(batch_size_ - table.size());
-            const std::int64_t rows = std::min(available, wanted);
-{%- for column in table.columns %}
-            const auto* column_{{ column.name }} =
-                static_cast<const {{ column.type | arrow_array_type }}*>(
-                    batch_->column({{ loop.index0 }}).get());
-{%- endfor %}
+        return table;
+    }
 
-            for (std::int64_t i = offset_; i < offset_ + rows; ++i) {
-                table.push_back(
-{%- for column in table.columns %}
-                    {{ column_value(column) }}{% if not loop.last %},{% endif %}
-{%- endfor %});
+    // Return every row of the Parquet file that has not been read yet.
+    {{ table.name }} read_all() {
+        {{ table.name }} table;
+        table.reserve(batch_size_);
+
+        while (true) {
+            fill_batch();
+            if (batch_ == nullptr) {
+                break;
             }
-
-            offset_ += rows;
+            append_rows(table, batch_->num_rows() - offset_);
         }
 
         return table;
@@ -184,6 +183,27 @@ class {{ parquet_reader.name }} {
             batch_ = std::move(batch);
             offset_ = 0;
         }
+    }
+
+    {# Append the first wanted rows that the batch being read still holds
+       to table, and mark them as read. -#}
+    void append_rows({{ table.name }}& table, std::int64_t wanted) {
+        const std::int64_t available = batch_->num_rows() - offset_;
+        const std::int64_t rows = std::min(available, wanted);
+{%- for column in table.columns %}
+        const auto* column_{{ column.name }} =
+            static_cast<const {{ column.type | arrow_array_type }}*>(
+                batch_->column({{ loop.index0 }}).get());
+{%- endfor %}
+
+        for (std::int64_t i = offset_; i < offset_ + rows; ++i) {
+            table.push_back(
+{%- for column in table.columns %}
+                {{ column_value(column) }}{% if not loop.last %},{% endif %}
+{%- endfor %});
+        }
+
+        offset_ += rows;
     }
 
     {# Throw if a column that is not nullable contains a null value. -#}
