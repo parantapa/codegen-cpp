@@ -73,8 +73,10 @@ int main() {
     MeasurementCsvReader reader("measurements.csv.gz", 100000);
     MeasurementParquetWriter writer("measurements.parquet");
 
+    Measurement batch;
     while (reader.has_more_batches()) {
-        const Measurement batch = reader.read_batch();
+        batch.clear();
+        reader.read_batch(batch);
         writer.write_batch(batch);
     }
 
@@ -259,22 +261,26 @@ tile.burn_time[row, col] = 1.5f;
 installed with Conan as `mdspan`;
 see `conanfile.txt`.
 
-Table readers hand out one batch of rows at a time,
+Table readers append rows to a table of yours,
+one batch at a time,
 and table writers take one batch at a time:
 
 ```cpp
-bool has_more_batches();       // readers
-Table read_batch();            // readers, at most batch_size rows
-Table read_all();              // readers, every row that is left
+bool has_more_batches();        // readers
+void read_batch(Table& table);  // readers, at most batch_size rows
+void read_all(Table& table);    // readers, every row that is left
 
 void write_batch(const Table& table);  // writers
 void close();                          // writers
 ```
 
-`read_all()` reads the whole file into one table,
-however many rows that takes,
-and the two may be mixed:
-`read_all()` returns what the calls to `read_batch()` before it left.
+Neither reading method clears the table it is given,
+so the rows it already holds are kept
+and one table can collect the rows of several calls.
+Reuse a table across the batches of a loop by calling `clear()` on it first,
+which keeps the memory it has allocated.
+The two may be mixed:
+`read_all()` appends whatever the calls to `read_batch()` before it left.
 
 A writer replaces the file it opens if it already exists.
 `close()` writes out what is left and releases the file;

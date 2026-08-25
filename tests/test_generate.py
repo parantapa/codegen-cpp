@@ -232,19 +232,19 @@ def test_render_csv_reader() -> None:
     assert "std::nullopt)" in header
     assert "std::int32_t default_block_size = 128 * 1024 * 1024;" in header
     assert "bool has_more_batches() {" in header
-    assert "Point read_batch() {" in header
-    assert "Point read_all() {" in header
+    assert "void read_batch(Point& table) {" in header
+    assert "void read_all(Point& table) {" in header
 
 
 def test_render_csv_reader_reads_batches_through_one_helper() -> None:
     """read_batch and read_all copy the rows of a batch with the same helper."""
     header = render_csv_reader(READER, TABLE)
 
-    assert "void append_rows(Point& table, std::int64_t wanted) {" in header
+    assert "std::int64_t append_rows(Point& table, std::int64_t wanted) {" in header
     assert header.count("static_cast<const arrow::UInt32Array*>(") == 1
 
     # read_batch stops at batch_size rows; read_all takes whatever is left.
-    assert "static_cast<std::int64_t>(batch_size_ - table.size()));" in header
+    assert "appended += append_rows(table, wanted - appended);" in header
     assert "append_rows(table, batch_->num_rows() - offset_);" in header
 
 
@@ -282,8 +282,8 @@ def test_generate_defines_every_csv_reader(tmp_path: Path) -> None:
 
     reader = definition_of(header, "MeasurementCsvReader")
     assert reader.startswith("class MeasurementCsvReader {")
-    assert "Measurement read_batch() {" in reader
-    assert "Measurement read_all() {" in reader
+    assert "void read_batch(Measurement& table) {" in reader
+    assert "void read_all(Measurement& table) {" in reader
 
 
 PARQUET_READER = ParquetReader(
@@ -302,19 +302,19 @@ def test_render_parquet_reader() -> None:
     assert "std::size_t batch_size," in header
     assert "std::int64_t buffer_size = default_buffer_size)" in header
     assert "bool has_more_batches() {" in header
-    assert "Point read_batch() {" in header
-    assert "Point read_all() {" in header
+    assert "void read_batch(Point& table) {" in header
+    assert "void read_all(Point& table) {" in header
 
 
 def test_render_parquet_reader_reads_batches_through_one_helper() -> None:
     """read_batch and read_all copy the rows of a batch with the same helper."""
     header = render_parquet_reader(PARQUET_READER, TABLE)
 
-    assert "void append_rows(Point& table, std::int64_t wanted) {" in header
+    assert "std::int64_t append_rows(Point& table, std::int64_t wanted) {" in header
     assert header.count("static_cast<const arrow::UInt32Array*>(") == 1
 
     # read_batch stops at batch_size rows; read_all takes whatever is left.
-    assert "static_cast<std::int64_t>(batch_size_ - table.size()));" in header
+    assert "appended += append_rows(table, wanted - appended);" in header
     assert "append_rows(table, batch_->num_rows() - offset_);" in header
 
 
@@ -377,8 +377,8 @@ def test_generate_defines_every_parquet_reader(tmp_path: Path) -> None:
 
     reader = definition_of(header, "MeasurementParquetReader")
     assert reader.startswith("class MeasurementParquetReader {")
-    assert "Measurement read_batch() {" in reader
-    assert "Measurement read_all() {" in reader
+    assert "void read_batch(Measurement& table) {" in reader
+    assert "void read_all(Measurement& table) {" in reader
 
 
 WRITER = CsvWriter(name="PointCsvWriter", table="Point")

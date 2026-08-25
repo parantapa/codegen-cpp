@@ -74,34 +74,31 @@ class {{ csv_reader.name }} {
             "failed to read '" + csv_file_ + "'");
     }
 
-    // Return true if read_batch would return at least one row.
+    // Return true if read_batch would append at least one row.
     bool has_more_batches() {
         fill_batch();
         return batch_ != nullptr;
     }
 
-    // Return the next batch_size rows of the CSV file,
+    // Append the next batch_size rows of the CSV file to table,
     // or fewer if the file has fewer rows left.
-    {{ table.name }} read_batch() {
-        {{ table.name }} table;
-        table.reserve(batch_size_);
+    void read_batch({{ table.name }}& table) {
+        const std::int64_t wanted = static_cast<std::int64_t>(batch_size_);
+        table.reserve(table.size() + batch_size_);
 
-        while (table.size() < batch_size_) {
+        std::int64_t appended = 0;
+        while (appended < wanted) {
             fill_batch();
             if (batch_ == nullptr) {
                 break;
             }
-            append_rows(table,
-                        static_cast<std::int64_t>(batch_size_ - table.size()));
+            appended += append_rows(table, wanted - appended);
         }
-
-        return table;
     }
 
-    // Return every row of the CSV file that has not been read yet.
-    {{ table.name }} read_all() {
-        {{ table.name }} table;
-        table.reserve(batch_size_);
+    // Append every row of the CSV file that has not been read yet to table.
+    void read_all({{ table.name }}& table) {
+        table.reserve(table.size() + batch_size_);
 
         while (true) {
             fill_batch();
@@ -110,8 +107,6 @@ class {{ csv_reader.name }} {
             }
             append_rows(table, batch_->num_rows() - offset_);
         }
-
-        return table;
     }
 
   private:
@@ -172,8 +167,8 @@ class {{ csv_reader.name }} {
     }
 
     {# Append the first wanted rows that the batch being read still holds
-       to table, and mark them as read. -#}
-    void append_rows({{ table.name }}& table, std::int64_t wanted) {
+       to table, and return how many rows that was. -#}
+    std::int64_t append_rows({{ table.name }}& table, std::int64_t wanted) {
         const std::int64_t available = batch_->num_rows() - offset_;
         const std::int64_t rows = std::min(available, wanted);
 {%- for column in table.columns %}
@@ -190,6 +185,7 @@ class {{ csv_reader.name }} {
         }
 
         offset_ += rows;
+        return rows;
     }
 
     {# Throw if a column that is not nullable contains a null value. -#}

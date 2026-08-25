@@ -118,13 +118,12 @@ Point read_all(Reader& reader, std::size_t expected_batches) {
     Point all;
     std::size_t batches = 0;
 
+    // Every batch is appended to the table the one before it left behind.
     while (reader.has_more_batches()) {
-        const Point batch = reader.read_batch();
-        CHECK(batch.size() > 0);
+        const std::size_t before = all.size();
+        reader.read_batch(all);
+        CHECK(all.size() > before);
         ++batches;
-        for (std::size_t i = 0; i < batch.size(); ++i) {
-            all.push_back(batch[i]);
-        }
     }
 
     CHECK(batches == expected_batches);
@@ -205,7 +204,8 @@ void test_csv_reader_compression_can_be_given() {
     // Without being told, the reader treats it as plain text and fails.
     CHECK(!error_of([] {
                PointCsvReader plain("compressed.csv", 8);
-               plain.read_batch();
+               Point rows;
+               plain.read_batch(rows);
            }).empty());
 
     // An uncompressed file named like a compressed one.
@@ -238,7 +238,8 @@ void test_csv_rejects_a_null_in_a_required_column() {
     write_file("bad_points.csv", "id,label,score,flag\n,alpha,1.5,true\n");
 
     PointCsvReader reader("bad_points.csv", 4);
-    const std::string error = error_of([&] { reader.read_batch(); });
+    Point rows;
+    const std::string error = error_of([&] { reader.read_batch(rows); });
 
     CHECK(contains(error, "column 'id' contains null values"));
 }
@@ -326,7 +327,8 @@ void test_parquet_rejects_a_null_in_a_required_column() {
                   arrow::Compression::SNAPPY);
 
     PointParquetReader reader("null_points.parquet", 8);
-    const std::string error = error_of([&] { reader.read_batch(); });
+    Point rows;
+    const std::string error = error_of([&] { reader.read_batch(rows); });
 
     CHECK(contains(error, "column 'id' of 'null_points.parquet'"));
     CHECK(contains(error, "contains null values"));
@@ -340,6 +342,32 @@ void test_parquet_rejects_a_missing_column() {
         error_of([] { PointParquetReader reader("partial.parquet", 8); });
 
     CHECK(contains(error, "'partial.parquet' has no column 'score'"));
+}
+
+void test_readers_read_all_of_what_is_left() {
+    // 'points.csv' and 'points.parquet' both hold the five rows of kCsv.
+    PointCsvReader csv_reader("points.csv", 2);
+    Point points;
+    csv_reader.read_batch(points);
+    CHECK(points.size() == 2);
+
+    // read_all appends the rows that read_batch left, and stops at the end.
+    csv_reader.read_all(points);
+    CHECK(points.size() == 5);
+    CHECK(points.id == (std::vector<std::int64_t>{10, 11, 12, 13, 14}));
+    CHECK(points[4].label == "epsilon");
+    CHECK(!csv_reader.has_more_batches());
+
+    csv_reader.read_all(points);
+    CHECK(points.size() == 5);
+
+    // A table that is read into keeps the rows it already holds.
+    PointParquetReader parquet_reader("points.parquet", 8);
+    parquet_reader.read_all(points);
+    CHECK(points.size() == 10);
+    CHECK(points[4].label == "epsilon");
+    CHECK(points[5].label == "row0");
+    CHECK(points.id == (std::vector<std::int64_t>{10, 11, 12, 13, 14, 10, 11, 12, 13, 14}));
 }
 
 void test_readers_reject_a_zero_batch_size() {
@@ -570,6 +598,7 @@ int main() {
     test_parquet_rejects_a_null_in_a_required_column();
     test_parquet_rejects_a_missing_column();
 
+    test_readers_read_all_of_what_is_left();
     test_readers_reject_a_zero_batch_size();
 
     test_csv_writer_round_trip();
