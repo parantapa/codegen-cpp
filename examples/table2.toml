@@ -1,0 +1,379 @@
+# An exemplar specification showing the aggregate types of codegen-cpp:
+# vectors, maps and structs,
+# built out of the scalar types and out of one another.
+#
+# NOTE: this feature is not implemented yet.
+# The file is the design of it, written as the tutorial it will become,
+# so `codegen-cpp generate examples/table2.toml` does not accept it today.
+#
+# See `examples/table1.toml` for the tables, readers and writers
+# that this specification builds on;
+# everything shown there holds here as well.
+
+
+# There are three aggregate types, each declared by its own section:
+#
+#     vector    a variable number of elements of one type
+#     map       a variable number of keys of one type, each with one value
+#     struct    a fixed set of named fields, each with its own type
+#
+# An aggregate type settles two things at once:
+# the C++ that holds a value, and the Parquet that stores it.
+# The three cover the three shapes a group of a Parquet file can have,
+# and each is written to, and read from, that shape and no other:
+#
+#     vector    a group annotated LIST
+#     map       a group annotated MAP
+#     struct    a plain group, which is what Parquet has instead of a record
+#
+# A type says what a value is called and what shape it has, and no more.
+# What a file calls it, and what is stored where the file holds a null,
+# belong to the reader that reads it,
+# so one set of types serves files that disagree about either.
+#
+# Every aggregate type needs a name.
+# The names live in the same namespace as the tables and the readers,
+# so an aggregate type may not be called `Work` if a table already is.
+#
+# An aggregate type may name a scalar type,
+# or another aggregate type of the same file, and nothing else.
+# The types it names may not lead back to it:
+# a type that contains itself, directly or through another type,
+# is an error rather than an infinitely deep column.
+# Writing every type below the types it uses,
+# the way this file does, keeps a specification readable,
+# but the order is not what the rule is checked against,
+# and tables, readers and writers may appear in any order as before.
+
+
+# A vector is a variable number of elements, all of the same type.
+# `element` is the type of one element.
+#
+# It is held as a `std::vector` of the C++ type of its element,
+# and stored as the three level Parquet LIST:
+#
+#     optional group keywords (List) {
+#       repeated group list {
+#         optional binary element (String);
+#       }
+#     }
+#
+# Every aggregate type is written into the header
+# under the name that declares it,
+# so a vector is a name for a `std::vector`:
+#
+#     using Keywords = std::vector<std::string>;
+#
+# and that name is what every column, and every deeper type, is spelled with.
+[[vector]]
+name = "Keywords"
+element = "str"
+
+[[vector]]
+name = "Positions"
+element = "i32"
+
+
+# A map is a variable number of keys, each holding one value.
+# `key` is the type of a key and `value` the type of a value.
+#
+# It is stored as the Parquet MAP:
+#
+#     optional group ids (Map) {
+#       repeated group key_value {
+#         required binary key (String);
+#         optional binary value (String);
+#       }
+#     }
+#
+# The keys are data rather than specification,
+# so a map holds whatever keys each row of the file holds,
+# and reading one needs no idea of what they will be.
+# A key has to be a scalar type other than `f32`, `f64` and `bool`,
+# and is never null, which is what the MAP requires.
+# A row that holds the same key twice is an error.
+#
+# The name of a map is a name for one of the two keyed containers:
+#
+#     using Ids = std::map<std::string, std::string>;
+[[map]]
+name = "Ids"
+key = "str"
+value = "str"
+
+# `is_unordered` picks the C++ container that holds the pairs,
+# and is false by default, which is a `std::map`.
+# There the pairs sit in the order of their keys,
+# so a map holds them in one order
+# whatever order the file it was read from stored them in,
+# and a table written back out is the same file every time.
+# Setting it asks for a `std::unordered_map` instead,
+# which finds a key in constant time
+# and leaves the pairs in an order not worth relying on.
+# The choice reaches no further than the name:
+#
+#     using CitationsByYear =
+#         std::unordered_map<std::int64_t, std::uint32_t>;
+#
+# and the Parquet MAP underneath is the same either way.
+[[map]]
+name = "CitationsByYear"
+key = "i64"
+value = "u32"
+is_unordered = true
+
+
+# A struct is a fixed set of fields, each with its own name and type.
+#
+# It is stored as a plain group, one child per field:
+#
+#     optional group biblio {
+#       optional binary volume (String);
+#       optional binary issue (String);
+#       optional int32 first_page;
+#       optional int32 last_page;
+#     }
+#
+# so a struct is the only aggregate type that costs a leaf column per part,
+# and the only one a reader can take apart:
+# reading two fields of ten reads two columns.
+# A vector or a map is read whole or not at all.
+#
+# `fields` declares them, and reads like the columns of a table:
+# a `name` used verbatim as a C++ member name,
+# and a `type` that is a scalar type or an aggregate type.
+# The names have to be unique,
+# and the order of the fields is the order of the generated members,
+# so `Biblio` below is
+#
+#     struct Biblio {
+#         std::string volume;
+#         std::string issue;
+#         std::int32_t first_page;
+#         std::int32_t last_page;
+#     };
+#
+# and a field is reached as `biblio.first_page`.
+# A struct is the one aggregate type with members of its own,
+# so it is written into the header as a struct
+# rather than as a name for a container.
+[[struct]]
+name = "Biblio"
+fields = [
+    { name = "volume", type = "str" },
+    { name = "issue", type = "str" },
+    { name = "first_page", type = "i32" },
+    { name = "last_page", type = "i32" },
+]
+
+[[struct]]
+name = "OpenAccess"
+fields = [
+    { name = "is_oa", type = "bool" },
+    { name = "status", type = "str" },
+    { name = "url", type = "str" },
+]
+
+# A field may hold an aggregate type,
+# which is how the deeper shapes are written.
+# This one is a struct of vectors.
+[[struct]]
+name = "MentionPositions"
+fields = [
+    { name = "title", type = "Positions" },
+    { name = "abstract", type = "Positions" },
+    { name = "body", type = "Positions" },
+]
+
+# A struct is the element of a vector as readily as anything else,
+# and a vector of structs is the commonest shape a Parquet file holds.
+[[struct]]
+name = "TopicScore"
+fields = [
+    { name = "name", type = "str" },
+    { name = "score", type = "f64" },
+]
+
+[[vector]]
+name = "Topics"
+element = "TopicScore"
+
+# A vector of vectors.
+[[vector]]
+name = "Affiliations"
+element = "Keywords"
+
+# There is no limit on how deep this goes,
+# though every level costs a level of `std::vector` in the generated struct.
+
+
+# The columns of a table read the way the fields of a struct do,
+# and take the same two attributes:
+# a `name` used verbatim as the C++ member name,
+# and a `type` that is a scalar type or an aggregate type.
+#
+# The generated struct holds one `std::vector` per column, as it always does,
+# so the C++ that comes out of the columns below is:
+#
+#     struct Work {
+#         std::vector<std::int64_t> work_id;
+#         std::vector<std::string> title;
+#         std::vector<Keywords> keywords;
+#         std::vector<Ids> ids;
+#         std::vector<Biblio> biblio;
+#         std::vector<OpenAccess> open_access;
+#         std::vector<Topics> topics;
+#         std::vector<CitationsByYear> citations;
+#         std::vector<MentionPositions> mentions;
+#         std::vector<Affiliations> affiliations;
+#     };
+#
+# A column of an aggregate type is a `std::vector` of that type by name,
+# which is what keeps a column of a vector of vectors
+# readable at the one place it is declared.
+# Every type it names is written into the header above the table,
+# in an order that declares each of them before the types that hold it.
+[[table]]
+name = "Work"
+columns = [
+    { name = "work_id", type = "i64" },
+    { name = "title", type = "str" },
+    { name = "keywords", type = "Keywords" },
+    { name = "ids", type = "Ids" },
+    { name = "biblio", type = "Biblio" },
+    { name = "open_access", type = "OpenAccess" },
+    { name = "topics", type = "Topics" },
+    { name = "citations", type = "CitationsByYear" },
+    { name = "mentions", type = "MentionPositions" },
+    { name = "affiliations", type = "Affiliations" },
+]
+
+# A table of scalar columns is what it was before.
+[[table]]
+name = "WorkSummary"
+columns = [
+    { name = "work_id", type = "i64" },
+    { name = "title", type = "str" },
+    { name = "keyword_count", type = "u32" },
+]
+
+
+# A parquet_reader reads a table the way it always did.
+# A vector column is read from the three level Parquet LIST,
+# a map column from the Parquet MAP,
+# and a struct column from a plain group,
+# which is what Arrow, Spark and every other writer of the format produce,
+# so a file written elsewhere reads back
+# as long as the types line up level for level.
+#
+# Everything a reader has to say about a file
+# it says about one part of the table at a time,
+# named by the flattened key of that part.
+# A key is the name of a column,
+# followed by one step for every level below it:
+#
+#     .<field>     a field of a struct
+#     .element     the element of a vector
+#     .value       the value of a map
+#
+# `element` and `value` are the names Parquet gives those levels itself,
+# in the `element` child of a LIST and the `value` child of a MAP.
+# A key of a map is no step of its own,
+# because a key is never null and is never matched against a specification.
+# So `biblio.first_page` is a field of a struct column,
+# `keywords.element` is one keyword,
+# `topics.element.score` is the score of one topic of the vector of them,
+# and `affiliations.element.element` is one string, two vectors down.
+#
+# `name_in_file` is the name the reader looks for,
+# where that is not the name the specification uses.
+# It is what reaches a column or a field the file calls `class`, or `2023`,
+# or anything else that is no use as a C++ member name,
+# and it is what keeps a long name in the file
+# from being a long name in every line of C++ that touches it.
+# Only a key that ends at a column or at a field of a struct may be renamed:
+# the element of a vector and the value of a map are matched by position,
+# so a file does not name them and neither does a specification.
+# Two parts of one group may not be read by one name once they are renamed.
+#
+# `default` is the value the reader stores where the file holds a null,
+# and has to fit the type of the part it names.
+# A null that no default answers for is an error, whatever depth it is at.
+# A key that ends at an aggregate type takes no default,
+# because a null aggregate is read as the empty value of its own type:
+# a vector of no elements, a map of no keys,
+# or a struct whose fields each take their own default.
+#
+# Note what moving these off the types buys and what it costs.
+# A default belongs to a place in a table rather than to a type,
+# so two readers of one table may disagree about both,
+# and `mentions.title`, `mentions.abstract` and `mentions.body`
+# may each default differently though all three are a `Positions`.
+# The cost is the other side of the same coin:
+# a type used in ten places is spelled out ten times.
+#
+# Both maps are written here as sections of their own,
+# which is the same TOML as an inline table
+# and the only spelling that fits on a page.
+[[parquet_reader]]
+name = "WorkParquetReader"
+table = "Work"
+
+[parquet_reader.name_in_file]
+work_id = "id"
+citations = "counts"
+"open_access.status" = "oa_status"
+"open_access.url" = "oa_url"
+"topics.element.name" = "display_name"
+
+[parquet_reader.default]
+title = "unknown"
+"keywords.element" = ""
+"ids.value" = ""
+"citations.value" = 0
+"biblio.volume" = ""
+"biblio.issue" = ""
+"biblio.first_page" = -1
+"biblio.last_page" = -1
+"open_access.is_oa" = false
+"open_access.status" = "unknown"
+"open_access.url" = ""
+"topics.element.name" = ""
+"topics.element.score" = 0.0
+"mentions.title.element" = -1
+"mentions.abstract.element" = -1
+"mentions.body.element" = -1
+"affiliations.element.element" = ""
+
+
+# A reader that declares neither reads every part by the name it carries here
+# and refuses every null the file holds.
+[[parquet_reader]]
+name = "WorkSummaryParquetReader"
+table = "WorkSummary"
+
+
+# A parquet_writer is the mirror image,
+# and writes each type back as the shape it declares:
+# a LIST for a vector, a MAP for a map, a plain group for a struct.
+#
+# A writer declares no names of its own and writes the names of the types,
+# so a file read through `name_in_file` and written back out by this writer
+# carries the names of the specification rather than the names it was read
+# with, and holds exactly the columns and fields the specification declares.
+[[parquet_writer]]
+name = "WorkParquetWriter"
+table = "Work"
+
+
+# CSV has no way to hold a vector, a map or a struct,
+# so a csv_reader or a csv_writer over a table with an aggregate column
+# is an error rather than a guess at an encoding.
+# The scalar table is written out as it always was.
+[[csv_writer]]
+name = "WorkSummaryCsvWriter"
+table = "WorkSummary"
+
+# Datasets are closed to aggregate types for the same reason
+# they are closed to `bool` and `str`:
+# an n-dimensional array holds its elements densely and at a fixed size.

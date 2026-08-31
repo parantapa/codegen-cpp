@@ -103,8 +103,16 @@ HDF5_NATIVE_TYPES = {
 }
 
 
-def cpp_type(type: ScalarType) -> str:
-    """Return the C++ type used to represent TYPE."""
+def cpp_type(type: ScalarType | str) -> str:
+    """
+    Return the C++ type used to represent TYPE.
+
+    Every aggregate type is written into the header
+    under the name that declares it,
+    so the name of one is already the C++ type of it.
+    """
+    if isinstance(type, str):
+        return type
     return CPP_TYPES[type]
 
 

@@ -1,0 +1,14 @@
+{#- A map is a name for one of the two keyed containers,
+    which is the one thing is_unordered decides.
+    The Parquet MAP underneath is the same either way. -#}
+{%- set container = "std::unordered_map" if map.is_unordered else "std::map" -%}
+// The map type '{{ map.name }}',
+// read from and written to a Parquet group annotated MAP.
+{% if map.is_unordered -%}
+// A key is found in constant time,
+// and the pairs are held in an order not worth relying on.
+{% else -%}
+// The pairs are held in the order of their keys,
+// so a table written back out is the same file every time.
+{% endif -%}
+using {{ map.name }} = {{ container }}<{{ map.key | cpp_type }}, {{ map.value | cpp_type }}>;

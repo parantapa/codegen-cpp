@@ -1,0 +1,11 @@
+{#- A struct is the only aggregate type with members of its own,
+    one per field, in the order the fields are declared. -#}
+// The struct type '{{ struct.name }}',
+// read from and written to a plain Parquet group of one child per field.
+struct {{ struct.name }} {
+{%- for field in struct.fields %}
+    {{ field.type | cpp_type }} {{ field.name }};
+{%- endfor %}
+
+    bool operator==(const {{ struct.name }}&) const = default;
+};

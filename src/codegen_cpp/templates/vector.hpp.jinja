@@ -1,0 +1,4 @@
+{#- A vector is a name for a std::vector of the C++ type of its element. -#}
+// The vector type '{{ vector.name }}',
+// read from and written to a Parquet group annotated LIST.
+using {{ vector.name }} = std::vector<{{ vector.element | cpp_type }}>;

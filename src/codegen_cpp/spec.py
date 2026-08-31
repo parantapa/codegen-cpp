@@ -5,9 +5,9 @@ from collections.abc import Iterable
 from enum import Enum
 from math import isfinite
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Annotated, Any, ClassVar, NamedTuple
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, BeforeValidator, model_validator
 
 
 class ScalarType(Enum):
@@ -44,6 +44,8 @@ INTEGER_TYPES = set(INTEGER_BITS)
 
 NUMERIC_TYPES = INTEGER_TYPES | FLOAT_TYPES
 
+MAP_KEY_TYPES = INTEGER_TYPES | {ScalarType.str}
+
 
 def find_duplicates(names: Iterable[str]) -> list[str]:
     """Return the names that occur more than once, in order of first repeat."""
@@ -56,9 +58,252 @@ def find_duplicates(names: Iterable[str]) -> list[str]:
     return list(duplicates)
 
 
-class Column(BaseModel):
+DefaultValue = bool | int | float | str
+
+
+def check_default_value(type: ScalarType, value: DefaultValue) -> str | None:
+    """
+    Return the reason why VALUE cannot be stored in TYPE, or None.
+
+    Note that `bool` is a subclass of `int` in Python,
+    so booleans are checked before integers.
+    """
+    if type is ScalarType.bool:
+        if not isinstance(value, bool):
+            return "expects a boolean"
+        return None
+
+    if type is ScalarType.str:
+        if not isinstance(value, str):
+            return "expects a string"
+        return None
+
+    if type in FLOAT_TYPES:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return "expects a number"
+        if not isfinite(value):
+            return "expects a finite number"
+        return None
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        return "expects an integer"
+
+    bits = INTEGER_BITS[type]
+    if type in SIGNED_TYPES:
+        low, high = -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
+    else:
+        low, high = 0, 2**bits - 1
+    if not low <= value <= high:
+        return f"expects an integer between {low} and {high}"
+    return None
+
+
+def parse_type_ref(value: Any) -> Any:
+    """
+    Turn the name of a scalar type into its ScalarType, and leave the rest.
+    """
+    if isinstance(value, str):
+        try:
+            return ScalarType(value)
+        except ValueError:
+            return value
+    return value
+
+
+TypeRef = Annotated[ScalarType | str, BeforeValidator(parse_type_ref)]
+
+
+class Member(BaseModel):
+    """
+    The name and the type of one part of a table.
+
+    A member says what a value is called in C++ and what shape it has,
+    and nothing about the file it is read from:
+    the name a reader looks for, and the value it stores for a null,
+    are declared by the reader itself.
+    """
+
     name: str
-    type: ScalarType
+    type: TypeRef
+
+
+class Column(Member):
+    """One column of a table."""
+
+
+class StructField(Member):
+    """One field of a struct."""
+
+
+class Vector(BaseModel):
+    """
+    A variable number of elements of one type.
+    """
+
+    KIND: ClassVar[str] = "vector"
+
+    name: str
+    element: TypeRef
+
+
+class Map(BaseModel):
+    """
+    A variable number of keys of one type, each holding one value.
+    """
+
+    KIND: ClassVar[str] = "map"
+
+    name: str
+    key: ScalarType
+    value: TypeRef
+
+    # The pairs are held in a `std::map`, in the order of their keys,
+    # unless is_unordered asks for a `std::unordered_map` instead.
+    is_unordered: bool = False
+
+    @model_validator(mode="after")
+    def check_key(self) -> "Map":
+        if self.key not in MAP_KEY_TYPES:
+            allowed = ", ".join(
+                scalar.value for scalar in ScalarType if scalar in MAP_KEY_TYPES
+            )
+            raise ValueError(
+                f"map '{self.name}' has key type '{self.key.value}', "
+                f"but a key is one of: {allowed}"
+            )
+        return self
+
+
+class Struct(BaseModel):
+    """
+    A fixed set of named fields, each with its own type.
+    """
+
+    KIND: ClassVar[str] = "struct"
+
+    name: str
+    fields: list[StructField]
+
+    @model_validator(mode="after")
+    def check_fields(self) -> "Struct":
+        if not self.fields:
+            raise ValueError(f"struct '{self.name}' has no fields")
+
+        duplicates = find_duplicates(field.name for field in self.fields)
+        if duplicates:
+            raise ValueError(
+                f"struct '{self.name}' has duplicate fields: "
+                f"{', '.join(duplicates)}"
+            )
+        return self
+
+
+Aggregate = Vector | Map | Struct
+
+
+def referenced_types(aggregate: Aggregate) -> list[str]:
+    """Return the aggregate types that AGGREGATE names, in declaration order."""
+    if isinstance(aggregate, Vector):
+        types: list[ScalarType | str] = [aggregate.element]
+    elif isinstance(aggregate, Map):
+        types = [aggregate.value]
+    else:
+        types = [field.type for field in aggregate.fields]
+
+    return [type for type in types if not isinstance(type, ScalarType)]
+
+
+def find_type_cycles(aggregates: dict[str, Aggregate]) -> list[list[str]]:
+    """
+    Return one cycle per group of aggregate types that contain one another.
+    """
+    done: set[str] = set()
+    cycles: dict[tuple[str, ...], list[str]] = {}
+
+    def visit(name: str, path: list[str]) -> None:
+        if name in path:
+            start = path.index(name)
+            cycle = path[start:]
+            cycles.setdefault(tuple(sorted(cycle)), cycle)
+            return
+        if name in done:
+            return
+
+        path.append(name)
+        for referenced in referenced_types(aggregates[name]):
+            if referenced in aggregates:
+                visit(referenced, path)
+        path.pop()
+        done.add(name)
+
+    for name in aggregates:
+        visit(name, [])
+
+    return list(cycles.values())
+
+
+# The steps a key takes through the levels Parquet does not name after a field.
+# They are the names Parquet gives those levels itself,
+# in the `element` child of a LIST and the `value` child of a MAP.
+VECTOR_STEP = "element"
+MAP_STEP = "value"
+
+
+class FlatKey(NamedTuple):
+    """One key of the flattened form of a table, and what it names."""
+
+    type: ScalarType | str
+
+    # Whether the last step of the key names a column or a field of a struct,
+    # which is what a file names in turn,
+    # and so what `name_in_file` of a reader may replace.
+    # The element of a vector and the value of a map are matched by position,
+    # so neither is named by the file or by the specification.
+    is_named: bool
+
+
+def flatten_table(
+    table: "Table", aggregates: dict[str, Aggregate]
+) -> dict[str, FlatKey]:
+    """
+    Return every key of TABLE in its flattened form, in declaration order.
+
+    A key is the name of a column
+    followed by one step per level below it:
+    the name of a field of a struct,
+    `element` for the element of a vector,
+    and `value` for the value of a map.
+    The key of a map is never a step of its own,
+    because a key of a Parquet MAP is never null
+    and is never matched against the specification.
+
+    A type that is not declared stops the walk where it stands,
+    and the caller reports it.
+    The declared types have to be acyclic, or this does not terminate.
+    """
+    keys: dict[str, FlatKey] = {}
+
+    def walk(key: str, type: ScalarType | str, is_named: bool) -> None:
+        keys[key] = FlatKey(type=type, is_named=is_named)
+        if isinstance(type, ScalarType):
+            return
+
+        aggregate = aggregates.get(type)
+        if aggregate is None:
+            return
+
+        if isinstance(aggregate, Vector):
+            walk(f"{key}.{VECTOR_STEP}", aggregate.element, False)
+        elif isinstance(aggregate, Map):
+            walk(f"{key}.{MAP_STEP}", aggregate.value, False)
+        else:
+            for field in aggregate.fields:
+                walk(f"{key}.{field.name}", field.type, True)
+
+    for column in table.columns:
+        walk(column.name, column.type, True)
+
+    return keys
 
 
 class Table(BaseModel):
@@ -137,46 +382,6 @@ class Dataset(BaseModel):
         return self
 
 
-DefaultValue = bool | int | float | str
-
-
-def check_default_value(column: Column, value: DefaultValue) -> str | None:
-    """
-    Return the reason why VALUE cannot be stored in COLUMN, or None.
-
-    Note that `bool` is a subclass of `int` in Python,
-    so booleans are checked before integers.
-    """
-    if column.type is ScalarType.bool:
-        if not isinstance(value, bool):
-            return "expects a boolean"
-        return None
-
-    if column.type is ScalarType.str:
-        if not isinstance(value, str):
-            return "expects a string"
-        return None
-
-    if column.type in FLOAT_TYPES:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return "expects a number"
-        if not isfinite(value):
-            return "expects a finite number"
-        return None
-
-    if isinstance(value, bool) or not isinstance(value, int):
-        return "expects an integer"
-
-    bits = INTEGER_BITS[column.type]
-    if column.type in SIGNED_TYPES:
-        low, high = -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
-    else:
-        low, high = 0, 2**bits - 1
-    if not low <= value <= high:
-        return f"expects an integer between {low} and {high}"
-    return None
-
-
 class TableClass(BaseModel):
     """The fields shared by every C++ class generated for a table."""
 
@@ -200,6 +405,17 @@ class CsvReader(Reader):
 
 class ParquetReader(Reader):
     KIND: ClassVar[str] = "parquet_reader"
+
+    # Both are keyed by the flattened keys of the table that is read,
+    # so they reach a column, a field of a struct at any depth,
+    # the element of a vector and the value of a map alike.
+    #
+    # `default` is what the reader stores where the file holds a null,
+    # and a null that no default answers for is an error.
+    # `name_in_file` is the name the reader looks for,
+    # where that is not the name the specification uses.
+    default: dict[str, DefaultValue] = {}
+    name_in_file: dict[str, str] = {}
 
 
 class CsvWriter(TableClass):
@@ -285,12 +501,20 @@ def selected_arrays(dataset: Dataset, hdf5_class: Hdf5Class) -> list[NdArray]:
 class Spec(BaseModel):
     tables: list[Table] = []
     datasets: list[Dataset] = []
+    vectors: list[Vector] = []
+    maps: list[Map] = []
+    structs: list[Struct] = []
     csv_readers: list[CsvReader] = []
     parquet_readers: list[ParquetReader] = []
     csv_writers: list[CsvWriter] = []
     parquet_writers: list[ParquetWriter] = []
     hdf5_readers: list[Hdf5Reader] = []
     hdf5_writers: list[Hdf5Writer] = []
+
+    @property
+    def aggregates(self) -> list[Aggregate]:
+        """Return every aggregate type of the specification."""
+        return [*self.vectors, *self.maps, *self.structs]
 
     @property
     def readers(self) -> list[Reader]:
@@ -320,14 +544,44 @@ class Spec(BaseModel):
         """
         errors: list[str] = []
 
-        # Tables, datasets and readers share one namespace.
+        # Tables, datasets, aggregate types and readers share one namespace.
         names = [table.name for table in self.tables]
         names += [dataset.name for dataset in self.datasets]
+        names += [aggregate.name for aggregate in self.aggregates]
         names += [generated.name for generated in self.table_classes]
         names += [generated.name for generated in self.dataset_classes]
         duplicates = find_duplicates(names)
         if duplicates:
             errors.append(f"duplicate table or reader names: {', '.join(duplicates)}")
+
+        # A type that is not a scalar type has to be an aggregate type
+        # declared in the same file,
+        # and the aggregate types may not contain one another.
+        aggregates = {aggregate.name: aggregate for aggregate in self.aggregates}
+        for aggregate in self.aggregates:
+            unknown = [
+                name for name in referenced_types(aggregate) if name not in aggregates
+            ]
+            if unknown:
+                errors.append(
+                    f"{aggregate.KIND} '{aggregate.name}' refers to "
+                    f"undefined types: {', '.join(unknown)}"
+                )
+
+        cycles = find_type_cycles(aggregates)
+        for cycle in cycles:
+            errors.append(
+                f"aggregate types contain one another: "
+                f"{' -> '.join([*cycle, cycle[0]])}"
+            )
+
+        for table in self.tables:
+            for column in table.columns:
+                if isinstance(column.type, str) and column.type not in aggregates:
+                    errors.append(
+                        f"table '{table.name}' column '{column.name}' refers to "
+                        f"undefined type '{column.type}'"
+                    )
 
         tables = {table.name: table for table in self.tables}
         for generated in self.table_classes:
@@ -335,6 +589,23 @@ class Spec(BaseModel):
                 errors.append(
                     f"{generated.KIND} '{generated.name}' refers to "
                     f"undefined table '{generated.table}'"
+                )
+
+        for generated in [*self.csv_readers, *self.csv_writers]:
+            table = tables.get(generated.table)
+            if table is None:
+                continue
+
+            aggregate_columns = [
+                column.name
+                for column in table.columns
+                if not isinstance(column.type, ScalarType)
+            ]
+            if aggregate_columns:
+                errors.append(
+                    f"{generated.KIND} '{generated.name}' uses table "
+                    f"'{table.name}', which has columns no CSV can hold: "
+                    f"{', '.join(aggregate_columns)}"
                 )
 
         for reader in self.readers:
@@ -354,11 +625,86 @@ class Spec(BaseModel):
                 column = columns.get(name)
                 if column is None:
                     continue
-                reason = check_default_value(column, value)
+
+                if not isinstance(column.type, ScalarType):
+                    errors.append(
+                        f"{reader.KIND} '{reader.name}' has a default_value "
+                        f"for column '{name}', which is of aggregate type "
+                        f"'{column.type}'"
+                    )
+                    continue
+
+                reason = check_default_value(column.type, value)
                 if reason is not None:
                     errors.append(
                         f"{reader.KIND} '{reader.name}' has a default_value "
                         f"for column '{name}' that {reason}"
+                    )
+
+        # A cycle would make the flattened form of a table infinite,
+        # and is reported above, so the keys are only walked without one.
+        for reader in self.parquet_readers if not cycles else []:
+            table = tables.get(reader.table)
+            if table is None:
+                continue
+
+            keys = flatten_table(table, aggregates)
+
+            for key, value in reader.default.items():
+                flat = keys.get(key)
+                if flat is None:
+                    errors.append(
+                        f"parquet_reader '{reader.name}' has a default for "
+                        f"'{key}', which table '{table.name}' does not hold"
+                    )
+                    continue
+                if not isinstance(flat.type, ScalarType):
+                    errors.append(
+                        f"parquet_reader '{reader.name}' has a default for "
+                        f"'{key}', which is of aggregate type '{flat.type}'"
+                    )
+                    continue
+                reason = check_default_value(flat.type, value)
+                if reason is not None:
+                    errors.append(
+                        f"parquet_reader '{reader.name}' has a default for "
+                        f"'{key}' that {reason}"
+                    )
+                if key in reader.default_values:
+                    errors.append(
+                        f"parquet_reader '{reader.name}' declares both a "
+                        f"default_value and a default for '{key}'"
+                    )
+
+            for key in reader.name_in_file:
+                flat = keys.get(key)
+                if flat is None:
+                    errors.append(
+                        f"parquet_reader '{reader.name}' has a name_in_file for "
+                        f"'{key}', which table '{table.name}' does not hold"
+                    )
+                elif not flat.is_named:
+                    errors.append(
+                        f"parquet_reader '{reader.name}' has a name_in_file for "
+                        f"'{key}', which a Parquet file matches by position "
+                        f"rather than by name"
+                    )
+
+            # Renaming may not make two parts of one group share a name.
+            groups: dict[str, list[str]] = {}
+            for key, flat in keys.items():
+                if not flat.is_named:
+                    continue
+                parent, _, last = key.rpartition(".")
+                groups.setdefault(parent, []).append(reader.name_in_file.get(key, last))
+
+            for parent, names in groups.items():
+                duplicates = find_duplicates(names)
+                if duplicates:
+                    where = f"'{parent}'" if parent else f"table '{table.name}'"
+                    errors.append(
+                        f"parquet_reader '{reader.name}' reads two parts of "
+                        f"{where} by one name: {', '.join(duplicates)}"
                     )
 
         datasets = {dataset.name: dataset for dataset in self.datasets}
@@ -401,6 +747,9 @@ class Spec(BaseModel):
 
 
 SECTIONS = {
+    "vector": "vectors",
+    "map": "maps",
+    "struct": "structs",
     "table": "tables",
     "dataset": "datasets",
     "csv_reader": "csv_readers",
