@@ -821,7 +821,8 @@ cmake --build build/cpp
 ctest --test-dir build/cpp --output-on-failure
 ```
 
-`hdf5_plugins` comes from the `pb-conan-index` remote
+`hdf5_plugins` comes from the
+[`pb-conan-index`](https://github.com/parantapa/pb-conan-index) remote
 and holds the compression filters that HDF5 loads at run time.
 The CMake project points the HDF5 tests at the directory it packages them in,
 so `ctest` finds them without any environment of its own;
