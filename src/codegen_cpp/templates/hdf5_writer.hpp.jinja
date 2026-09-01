@@ -1,21 +1,90 @@
 {%- set arrays = dataset | selected_arrays(hdf5_writer) -%}
 {%- set direct = not dataset.column_major or dataset.ndim == 1 -%}
 {%- set chunked = hdf5_writer.chunk -%}
-{%- macro create_array(nd_array) %}
-                {# Replace whatever the group holds under this name already. -#}
-                if (group_.nameExists("{{ nd_array.name }}")) {
-                    group_.unlink("{{ nd_array.name }}");
-                }
+{%- macro create_arrays() %}
+    // Create every array of the dataset with the shape extents,
+    // replacing whatever the group holds under the same name already.
+    void create_arrays(
+        const std::array<hsize_t, {{ dataset.name }}::rank>& extents) {
+        {# Every array of the dataset has the same shape,
+           so one dataspace describes all of them. -#}
+        const H5::DataSpace space(static_cast<int>({{ dataset.name }}::rank),
+                                  extents.data());
 {%- if chunked %}
 
-                const H5::DataSet array = group_.createDataSet(
-                    "{{ nd_array.name }}", {{ nd_array.type | hdf5_native_type }},
-                    space, plist);
-{%- else %}
+        {# Every array is stored in chunks of the declared shape,
+           which is what a filter of the pipeline below applies to. -#}
+        H5::DSetCreatPropList plist;
+        std::array<hsize_t, {{ dataset.name }}::rank> chunk = {
+{%- for extent in hdf5_writer.chunk %}{{ extent }}{{ ", " if not loop.last }}{% endfor %}};
+        for (std::size_t i = 0; i < {{ dataset.name }}::rank; ++i) {
+            {# A chunk may not reach past the extent it is stored along,
+               and an extent of zero still takes a chunk of one. -#}
+            if (chunk[i] > extents[i]) {
+                chunk[i] = extents[i];
+            }
+            if (chunk[i] < 1) {
+                chunk[i] = 1;
+            }
+        }
+        plist.setChunk(static_cast<int>({{ dataset.name }}::rank), chunk.data());
+{%- for line in filters %}
+        {{ line }}
+{%- endfor %}
+{%- if hdf5_writer.compression.value != "none" %}
 
-                const H5::DataSet array = group_.createDataSet(
-                    "{{ nd_array.name }}", {{ nd_array.type | hdf5_native_type }}, space);
+        {# A filter has to be there before anything is written through it. -#}
+        if (!plist.allFiltersAvail()) [[unlikely]] {
+            throw std::runtime_error(
+                "the '{{ hdf5_writer.compression.value }}' filter is not available; "
+{%- if loaded_filter %}
+                "hdf5 loads a filter from the directories "
+                "in HDF5_PLUGIN_PATH");
+{%- else %}
+                "hdf5 was built without it");
 {%- endif %}
+        }
+{%- endif %}
+{%- endif %}
+{%- for nd_array in arrays %}
+
+        if (group_.nameExists("{{ nd_array.name }}")) {
+            group_.unlink("{{ nd_array.name }}");
+        }
+        group_.createDataSet("{{ nd_array.name }}", {{ nd_array.type | hdf5_native_type }},
+                             space{{ ", plist" if chunked }});
+{%- endfor %}
+    }
+{%- endmacro %}
+{%- macro open_array(nd_array) %}
+    // Open the array {{ nd_array.name }} of the group,
+    // which has to be there
+    // and to be stored with the datatype that the dataset declares for it.
+    H5::DataSet open_{{ nd_array.name }}() const {
+        const std::string path = group_path_ + "/{{ nd_array.name }}";
+        if (!group_.nameExists("{{ nd_array.name }}")) [[unlikely]] {
+            throw std::runtime_error("'" + path + "' is not in the HDF5 file");
+        }
+
+        const H5::DataSet array = group_.openDataSet("{{ nd_array.name }}");
+
+        {# What goes into an array stored through a filter
+           that hdf5 loads at run time goes through the filter too. -#}
+        if (!array.getCreatePlist().allFiltersAvail()) [[unlikely]] {
+            throw std::runtime_error(
+                "'" + path + "' is stored with a filter that is not "
+                "available; hdf5 loads a filter from the directories "
+                "in HDF5_PLUGIN_PATH");
+        }
+
+        const H5::DataType stored = array.getDataType();
+        if (stored != {{ nd_array.type | hdf5_native_type }}) [[unlikely]] {
+            throw std::runtime_error(
+                "'" + path + "' is not stored as '{{ nd_array.type.value }}'");
+        }
+
+        return array;
+    }
 {%- endmacro %}
 {#- The loops gathering the elements into a row major buffer. -#}
 {%- macro gather_buffer(nd_array) %}
@@ -65,24 +134,7 @@
                 array.write(buffer.data(), {{ native }}, memory, space);
 {%- endif %}
 {%- endmacro %}
-{%- macro open_array(nd_array) %}
-                {# The part is written into an array that is already there,
-                   with room for it and stored as the dataset declares. -#}
-                const std::string path = group_path_ + "/{{ nd_array.name }}";
-                if (!group_.nameExists("{{ nd_array.name }}")) [[unlikely]] {
-                    throw std::runtime_error("'" + path +
-                                             "' is not in the HDF5 file");
-                }
-
-                const H5::DataSet array = group_.openDataSet("{{ nd_array.name }}");
-
-                const H5::DataType stored = array.getDataType();
-                if (stored != {{ nd_array.type | hdf5_native_type }}) [[unlikely]] {
-                    throw std::runtime_error(
-                        "'" + path + "' is not stored as '{{ nd_array.type.value }}'");
-                }
-{%- endmacro %}
-{%- macro check_room(nd_array) %}
+{%- macro check_room() %}
                 H5::DataSpace space = array.getSpace();
                 if (space.getSimpleExtentNdims() != {{ dataset.ndim }}) [[unlikely]] {
                     throw std::runtime_error("'" + path +
@@ -106,14 +158,15 @@
 {%- endmacro %}
 {%- macro write_array(nd_array) %}
             {
-{{- create_array(nd_array) }}
+                const H5::DataSet array = group_.openDataSet("{{ nd_array.name }}");
 {{ write_from(nd_array) }}
             }
 {%- endmacro %}
 {%- macro write_part_array(nd_array) %}
             {
-{{- open_array(nd_array) }}
-{{ check_room(nd_array) }}
+                const std::string path = group_path_ + "/{{ nd_array.name }}";
+                const H5::DataSet array = open_{{ nd_array.name }}();
+{{ check_room() }}
 {{ write_part_from(nd_array) }}
             }
 {%- endmacro %}
@@ -158,54 +211,44 @@ class {{ hdf5_writer.name }} {
     // An array the group already holds under the same name is replaced,
     // whatever shape and datatype it was stored with.
     void write_dataset(const {{ dataset.name }}& data) {
+        {# Every array of the dataset has the shape that data was
+           allocated with. -#}
+        std::array<hsize_t, {{ dataset.name }}::rank> extents;
+        for (std::size_t i = 0; i < {{ dataset.name }}::rank; ++i) {
+            extents[i] = static_cast<hsize_t>(data.dims[i]);
+        }
+
         try {
-            {# Every array of the dataset has the shape that data was
-               allocated with, so one dataspace describes all of them. -#}
-            std::array<hsize_t, {{ dataset.name }}::rank> extents;
-            for (std::size_t i = 0; i < {{ dataset.name }}::rank; ++i) {
-                extents[i] = static_cast<hsize_t>(data.dims[i]);
-            }
-            const H5::DataSpace space(static_cast<int>({{ dataset.name }}::rank),
-                                      extents.data());
-{%- if chunked %}
-
-            {# Every array is stored in chunks of the declared shape,
-               which is what a filter of the pipeline below applies to. -#}
-            H5::DSetCreatPropList plist;
-            std::array<hsize_t, {{ dataset.name }}::rank> chunk = {
-{%- for extent in hdf5_writer.chunk %}{{ extent }}{{ ", " if not loop.last }}{% endfor %}};
-            for (std::size_t i = 0; i < {{ dataset.name }}::rank; ++i) {
-                {# A chunk may not reach past the extent it is stored along,
-                   and an extent of zero still takes a chunk of one. -#}
-                if (chunk[i] > extents[i]) {
-                    chunk[i] = extents[i];
-                }
-                if (chunk[i] < 1) {
-                    chunk[i] = 1;
-                }
-            }
-            plist.setChunk(static_cast<int>({{ dataset.name }}::rank), chunk.data());
-{%- for line in filters %}
-            {{ line }}
-{%- endfor %}
-{%- if hdf5_writer.compression.value != "none" %}
-
-            {# A filter has to be there before anything is written through it. -#}
-            if (!plist.allFiltersAvail()) [[unlikely]] {
-                throw std::runtime_error(
-                    "the '{{ hdf5_writer.compression.value }}' filter is not available; "
-{%- if loaded_filter %}
-                    "hdf5 loads a filter from the directories "
-                    "in HDF5_PLUGIN_PATH");
-{%- else %}
-                    "hdf5 was built without it");
-{%- endif %}
-            }
-{%- endif %}
-{%- endif %}
+            create_arrays(extents);
 {%- for array in arrays -%}
 {{ write_array(array) }}
 {%- endfor %}
+        } catch (const H5::Exception& e) {
+            throw std::runtime_error("failed to write '" + group_path_ + "': " +
+                                     e.getDetailMsg());
+        }
+    }
+
+    // Create every array of the dataset with the shape shape,
+    // which is one extent per dim of the dataset, and write nothing into them.
+    // An array that is larger than memory is laid out here
+    // and filled in piece by piece with write_partial_dataset,
+    // where write_dataset asks for the whole of it at once.
+    // An array the group already holds under the same name is replaced,
+    // whatever shape and datatype it was stored with.
+    void create_dataset(std::span<const std::size_t> shape) {
+        if (shape.size() != {{ dataset.name }}::rank) [[unlikely]] {
+            throw std::invalid_argument(
+                "shape must hold one extent per dim of '{{ dataset.name }}'");
+        }
+
+        std::array<hsize_t, {{ dataset.name }}::rank> extents;
+        for (std::size_t i = 0; i < {{ dataset.name }}::rank; ++i) {
+            extents[i] = static_cast<hsize_t>(shape[i]);
+        }
+
+        try {
+            create_arrays(extents);
         } catch (const H5::Exception& e) {
             throw std::runtime_error("failed to write '" + group_path_ + "': " +
                                      e.getDetailMsg());
@@ -217,9 +260,9 @@ class {{ hdf5_writer.name }} {
     // The shape data was allocated with is how much is written,
     // so the group has to hold every array already,
     // with room for that much of it beyond offset;
-    // write_dataset is what creates them.
+    // write_dataset and create_dataset are what create them.
     void write_partial_dataset(const {{ dataset.name }}& data,
-                               std::span<std::size_t> offset) {
+                               std::span<const std::size_t> offset) {
         if (offset.size() != {{ dataset.name }}::rank) [[unlikely]] {
             throw std::invalid_argument(
                 "offset must hold one index per dim of '{{ dataset.name }}'");
@@ -245,7 +288,9 @@ class {{ hdf5_writer.name }} {
         }
     }
 
-  private:
+  private:{{ create_arrays() }}
+{% for array in arrays %}{{ open_array(array) }}
+{% endfor %}
     std::string group_path_;
     H5::Group group_;
 };

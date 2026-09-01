@@ -1,35 +1,37 @@
 {%- set arrays = dataset | selected_arrays(hdf5_reader) -%}
 {%- set direct = not dataset.column_major or dataset.ndim == 1 -%}
 {%- macro open_array(nd_array) %}
-            {
-                const std::string path = group_path_ + "/{{ nd_array.name }}";
-                if (!group.nameExists("{{ nd_array.name }}")) [[unlikely]] {
-                    throw std::runtime_error("'" + path +
-                                             "' is not in the HDF5 file");
-                }
+    // Open the array {{ nd_array.name }} of the group,
+    // which has to be there
+    // and to be stored with the datatype that the dataset declares for it.
+    H5::DataSet open_{{ nd_array.name }}() const {
+        const std::string path = group_path_ + "/{{ nd_array.name }}";
+        if (!group_.nameExists("{{ nd_array.name }}")) [[unlikely]] {
+            throw std::runtime_error("'" + path + "' is not in the HDF5 file");
+        }
 
-                array_{{ nd_array.name }}_ = group.openDataSet("{{ nd_array.name }}");
+        const H5::DataSet array = group_.openDataSet("{{ nd_array.name }}");
 
-                {# An array stored through a filter that hdf5 loads at run time
-                   cannot be read back without it. -#}
-                const H5::DSetCreatPropList plist =
-                    array_{{ nd_array.name }}_.getCreatePlist();
-                if (!plist.allFiltersAvail()) [[unlikely]] {
-                    throw std::runtime_error(
-                        "'" + path + "' is stored with a filter that is not "
-                        "available; hdf5 loads a filter from the directories "
-                        "in HDF5_PLUGIN_PATH");
-                }
+        {# An array stored through a filter that hdf5 loads at run time
+           cannot be read back without it. -#}
+        if (!array.getCreatePlist().allFiltersAvail()) [[unlikely]] {
+            throw std::runtime_error(
+                "'" + path + "' is stored with a filter that is not "
+                "available; hdf5 loads a filter from the directories "
+                "in HDF5_PLUGIN_PATH");
+        }
 
-                const H5::DataType stored = array_{{ nd_array.name }}_.getDataType();
-                if (stored != {{ nd_array.type | hdf5_native_type }}) [[unlikely]] {
-                    throw std::runtime_error(
-                        "'" + path + "' is not stored as '{{ nd_array.type.value }}'");
-                }
-            }
+        const H5::DataType stored = array.getDataType();
+        if (stored != {{ nd_array.type | hdf5_native_type }}) [[unlikely]] {
+            throw std::runtime_error(
+                "'" + path + "' is not stored as '{{ nd_array.type.value }}'");
+        }
+
+        return array;
+    }
 {%- endmacro %}
-{%- macro check_shape(nd_array) %}
-                const H5::DataSpace space = array_{{ nd_array.name }}_.getSpace();
+{%- macro check_shape() %}
+                const H5::DataSpace space = array.getSpace();
                 if (space.getSimpleExtentNdims() != {{ dataset.ndim }}) [[unlikely]] {
                     throw std::runtime_error("'" + path +
                                              "' does not have rank {{ dataset.ndim }}");
@@ -48,8 +50,8 @@
                     }
                 }
 {%- endmacro %}
-{%- macro check_room(nd_array) %}
-                H5::DataSpace space = array_{{ nd_array.name }}_.getSpace();
+{%- macro check_room() %}
+                H5::DataSpace space = array.getSpace();
                 if (space.getSimpleExtentNdims() != {{ dataset.ndim }}) [[unlikely]] {
                     throw std::runtime_error("'" + path +
                                              "' does not have rank {{ dataset.ndim }}");
@@ -88,14 +90,14 @@
 {%- if direct %}
                 {# The dataset stores its arrays the way HDF5 reads them,
                    so the elements land where they belong. -#}
-                array_{{ nd_array.name }}_.read(data._mem_{{ nd_array.name }}.get(),
-{{ " " * (nd_array.name | length + 29) }}{{ native }});
+                array.read(data._mem_{{ nd_array.name }}.get(),
+                           {{ native }});
 {%- else %}
                 {# HDF5 reads the elements in row major order,
                    but the dataset stores them in column major order,
                    so they are put in place one at a time. -#}
                 std::vector<{{ cpp }}> buffer(data.size());
-                array_{{ nd_array.name }}_.read(buffer.data(), {{ native }});
+                array.read(buffer.data(), {{ native }});
 {{ scatter_buffer(nd_array) }}
 {%- endif %}
 {%- endmacro %}
@@ -105,29 +107,31 @@
 {%- if direct %}
                 {# The part of the file that the hyperslab selects
                    fills the whole of data, which memory describes. -#}
-                array_{{ nd_array.name }}_.read(data._mem_{{ nd_array.name }}.get(),
-{{ " " * (nd_array.name | length + 29) }}{{ native }}, memory, space);
+                array.read(data._mem_{{ nd_array.name }}.get(),
+                           {{ native }}, memory, space);
 {%- else %}
                 {# HDF5 reads the elements in row major order,
                    but the dataset stores them in column major order,
                    so they are put in place one at a time. -#}
                 std::vector<{{ cpp }}> buffer(data.size());
-                array_{{ nd_array.name }}_.read(buffer.data(), {{ native }},
-{{ " " * (nd_array.name | length + 29) }}memory, space);
+                array.read(buffer.data(), {{ native }},
+                           memory, space);
 {{ scatter_buffer(nd_array) }}
 {%- endif %}
 {%- endmacro %}
 {%- macro read_array(nd_array) %}
             {
                 const std::string path = group_path_ + "/{{ nd_array.name }}";
-{{ check_shape(nd_array) }}
+                const H5::DataSet array = open_{{ nd_array.name }}();
+{{ check_shape() }}
 {{ read_into(nd_array) }}
             }
 {%- endmacro %}
 {%- macro read_part_array(nd_array) %}
             {
                 const std::string path = group_path_ + "/{{ nd_array.name }}";
-{{ check_room(nd_array) }}
+                const H5::DataSet array = open_{{ nd_array.name }}();
+{{ check_room() }}
 {{ read_part_into(nd_array) }}
             }
 {%- endmacro %}
@@ -138,15 +142,19 @@
 // out of a group of an HDF5 file.
 class {{ hdf5_reader.name }} {
   public:
-    // Open the arrays in the group group_path of the open HDF5 file file.
+    // Open the group group_path of the open HDF5 file file,
+    // and look every array up in it once.
     // Each of them has to be there,
     // and to be stored with the datatype that the dataset declares for it.
+    // The arrays are looked up again by every read,
+    // so a group written again after the reader was constructed
+    // is read back as it stands rather than as it was.
     {{ hdf5_reader.name }}(H5::H5File& file, const std::string& group_path)
         : group_path_(group_path) {
         try {
-            const H5::Group group = file.openGroup(group_path_);
-{%- for array in arrays -%}
-{{ open_array(array) }}
+            group_ = file.openGroup(group_path_);
+{%- for array in arrays %}
+            open_{{ array.name }}();
 {%- endfor %}
         } catch (const H5::Exception& e) {
             throw std::runtime_error("failed to read '" + group_path_ + "': " +
@@ -156,7 +164,7 @@ class {{ hdf5_reader.name }} {
 
     // Read every array into data, which says by the shape it was allocated
     // with what shape the file has to hold them in.
-    void read_dataset({{ dataset.name }}& data) {
+    void read_dataset({{ dataset.name }}& data) const {
         try {
 {%- for array in arrays -%}
 {{ read_array(array) }}
@@ -172,7 +180,7 @@ class {{ hdf5_reader.name }} {
     // The shape data was allocated with is how much is read,
     // so the file has to hold that much of every array beyond offset.
     void read_partial_dataset({{ dataset.name }}& data,
-                              std::span<std::size_t> offset) {
+                              std::span<const std::size_t> offset) const {
         if (offset.size() != {{ dataset.name }}::rank) [[unlikely]] {
             throw std::invalid_argument(
                 "offset must hold one index per dim of '{{ dataset.name }}'");
@@ -198,9 +206,8 @@ class {{ hdf5_reader.name }} {
         }
     }
 
-  private:
+  private:{% for array in arrays %}{{ open_array(array) }}
+{% endfor %}
     std::string group_path_;
-{% for array in arrays %}
-    H5::DataSet array_{{ array.name }}_;
-{%- endfor %}
+    H5::Group group_;
 };

@@ -726,12 +726,13 @@ def test_render_hdf5_reader() -> None:
         header
     )
     assert ": group_path_(group_path) {" in header
-    assert "const H5::Group group = file.openGroup(group_path_);" in header
+    assert "group_ = file.openGroup(group_path_);" in header
 
-    # The arrays are opened once and read as often as asked.
-    assert "void read_dataset(TileData& data) {" in header
-    assert "H5::DataSet array_burn_time_;" in header
-    assert "H5::DataSet array_state_;" in header
+    # The group is held, and one method opens each array out of it.
+    assert "void read_dataset(TileData& data) const {" in header
+    assert "H5::DataSet open_burn_time() const {" in header
+    assert "H5::DataSet open_state() const {" in header
+    assert "H5::Group group_;" in header
 
 
 def test_render_hdf5_reader_declares_nothing_but_the_class() -> None:
@@ -757,8 +758,20 @@ def test_render_hdf5_reader_reads_every_array_by_default() -> None:
 
     assert 'const std::string path = group_path_ + "/burn_time";' in header
     assert 'const std::string path = group_path_ + "/state";' in header
-    assert 'if (!group.nameExists("burn_time")) [[unlikely]] {' in header
-    assert 'array_state_ = group.openDataSet("state");' in header
+    assert 'if (!group_.nameExists("burn_time")) [[unlikely]] {' in header
+    assert 'const H5::DataSet array = group_.openDataSet("state");' in header
+
+
+def test_render_hdf5_reader_opens_the_arrays_again_by_every_read() -> None:
+    """A handle held over a read would hand back an array that was replaced."""
+    header = render_hdf5_reader(HDF5_READER, DATASET)
+
+    # The group is held, and the arrays are opened out of it by the
+    # constructor and by each of the two reads that follow it.
+    assert "H5::Group group_;" in header
+    assert "H5::DataSet array_" not in header
+    assert header.count("open_burn_time();") == 3
+    assert header.count("const H5::DataSet array = open_burn_time();") == 2
 
 
 def test_render_hdf5_reader_include() -> None:
@@ -784,8 +797,7 @@ def test_render_hdf5_reader_pins_the_datatypes() -> None:
     """Every array is checked against the predefined type it declares."""
     header = render_hdf5_reader(HDF5_READER, DATASET)
 
-    assert "const H5::DataType stored = array_burn_time_.getDataType();" in header
-    assert "const H5::DataType stored = array_state_.getDataType();" in header
+    assert header.count("const H5::DataType stored = array.getDataType();") == 2
     assert "if (stored != H5::PredType::NATIVE_FLOAT) [[unlikely]] {" in header
     assert "if (stored != H5::PredType::NATIVE_INT8) [[unlikely]] {" in header
     assert "\"' is not stored as 'f32'\");" in header
@@ -801,7 +813,7 @@ def test_render_hdf5_reader_checks_the_shape() -> None:
     """The rank and every extent are checked against the allocated dataset."""
     header = render_hdf5_reader(HDF5_READER, DATASET)
 
-    assert "const H5::DataSpace space = array_burn_time_.getSpace();" in header
+    assert "const H5::DataSpace space = array.getSpace();" in header
     assert "if (space.getSimpleExtentNdims() != 2) [[unlikely]] {" in header
     assert "std::array<hsize_t, TileData::rank> extents;" in header
     assert "space.getSimpleExtentDims(extents.data());" in header
@@ -815,7 +827,7 @@ def test_render_hdf5_reader_reads_a_part_through_a_hyperslab() -> None:
     header = render_hdf5_reader(HDF5_READER, DATASET)
 
     assert "void read_partial_dataset(TileData& data," in header
-    assert "std::span<std::size_t> offset) {" in header
+    assert "std::span<const std::size_t> offset) const {" in header
     assert "if (offset.size() != TileData::rank) [[unlikely]] {" in header
     assert "throw std::invalid_argument(" in header
 
@@ -839,7 +851,7 @@ def test_render_hdf5_reader_reads_a_part_of_a_column_major_dataset() -> None:
     column_major = DATASET.model_copy(update={"column_major": True})
     header = render_hdf5_reader(HDF5_READER, column_major)
 
-    assert "array_burn_time_.read(buffer.data(), H5::PredType::NATIVE_FLOAT," in header
+    assert "array.read(buffer.data(), H5::PredType::NATIVE_FLOAT," in header
     assert "memory, space);" in header
     assert header.count("std::vector<float> buffer(data.size());") == 2
 
@@ -849,7 +861,7 @@ def test_render_hdf5_writer_writes_a_part_through_a_hyperslab() -> None:
     header = render_hdf5_writer(HDF5_WRITER, DATASET)
 
     assert "void write_partial_dataset(const TileData& data," in header
-    assert "std::span<std::size_t> offset) {" in header
+    assert "std::span<const std::size_t> offset) {" in header
     assert "if (offset.size() != TileData::rank) [[unlikely]] {" in header
 
     # The array is already there, and is opened rather than created.
@@ -909,7 +921,7 @@ def test_render_hdf5_reader_of_a_row_major_dataset_reads_in_place() -> None:
     """A row major dataset is stored the way HDF5 reads, so it reads directly."""
     header = render_hdf5_reader(HDF5_READER, DATASET)
 
-    assert "array_burn_time_.read(data._mem_burn_time.get()," in header
+    assert "array.read(data._mem_burn_time.get()," in header
     assert "H5::PredType::NATIVE_FLOAT);" in header
     assert "buffer" not in header
     assert "vector" not in hdf5_includes(DATASET).std
@@ -922,9 +934,7 @@ def test_render_hdf5_reader_of_a_column_major_dataset_lays_out_again() -> None:
 
     assert "vector" in hdf5_includes(column_major).std
     assert "std::vector<float> buffer(data.size());" in header
-    assert "array_burn_time_.read(buffer.data(), H5::PredType::NATIVE_FLOAT);" in (
-        header
-    )
+    assert "array.read(buffer.data(), H5::PredType::NATIVE_FLOAT);" in header
     assert "std::size_t element = 0;" in header
     assert "for (std::size_t i0 = 0; i0 < data.dims[0]; ++i0) {" in header
     assert "for (std::size_t i1 = 0; i1 < data.dims[1]; ++i1) {" in header
@@ -957,7 +967,7 @@ def test_render_hdf5_reader_of_a_one_dimensional_dataset_reads_in_place() -> Non
     reader = Hdf5Reader(name="TickDataHdf5Reader", dataset="TickData")
     header = render_hdf5_reader(reader, dataset)
 
-    assert "array_wind_speed_.read(data._mem_wind_speed.get()," in header
+    assert "array.read(data._mem_wind_speed.get()," in header
     assert "buffer" not in header
 
 
@@ -967,7 +977,7 @@ def test_generate_defines_every_hdf5_reader(tmp_path: Path) -> None:
 
     reader = definition_of(header, "RasterHdf5Reader")
     assert reader.startswith("class RasterHdf5Reader {")
-    assert "void read_dataset(Raster& data) {" in reader
+    assert "void read_dataset(Raster& data) const {" in reader
 
     # The layers reader excludes 'mask' and the mask reader has only it.
     assert "mask" not in definition_of(header, "RasterLayersHdf5Reader")
@@ -1028,8 +1038,22 @@ def test_render_hdf5_writer_replaces_an_array_that_is_there() -> None:
 
     assert 'if (group_.nameExists("burn_time")) {' in header
     assert 'group_.unlink("burn_time");' in header
-    assert "const H5::DataSet array = group_.createDataSet(" in header
-    assert '"burn_time", H5::PredType::NATIVE_FLOAT, space);' in header
+    assert 'group_.createDataSet("burn_time", H5::PredType::NATIVE_FLOAT,' in header
+    assert "                             space);" in header
+
+
+def test_render_hdf5_writer_creates_the_arrays_without_writing_them() -> None:
+    """create_dataset lays a group out for arrays that are larger than memory."""
+    header = render_hdf5_writer(HDF5_WRITER, DATASET)
+
+    assert "void create_dataset(std::span<const std::size_t> shape) {" in header
+    assert "if (shape.size() != TileData::rank) [[unlikely]] {" in header
+    assert "\"shape must hold one extent per dim of 'TileData'\");" in header
+    assert "extents[i] = static_cast<hsize_t>(shape[i]);" in header
+
+    # Creating the arrays is one method, which both ways in call.
+    assert "void create_arrays(" in header
+    assert header.count("create_arrays(extents);") == 2
 
 
 COMPRESSED_WRITER = Hdf5Writer(
@@ -1091,7 +1115,10 @@ def test_render_hdf5_writer_asks_for_a_built_in_filter_by_name() -> None:
     assert "plist.setDeflate(6);" in header
     assert "setFilter" not in header
     assert '"hdf5 was built without it");' in header
-    assert "HDF5_PLUGIN_PATH" not in header
+
+    # The plugin path is named only where an array that is already there
+    # is opened, which is one method per array and no part of creating them.
+    assert header.count("in HDF5_PLUGIN_PATH") == 2
 
     with_level = writer.model_copy(update={"compression_level": 9})
     assert "plist.setDeflate(9);" in render_hdf5_writer(with_level, DATASET)
@@ -1121,7 +1148,7 @@ def test_render_hdf5_writer_chunks_without_compressing() -> None:
     assert "plist.setChunk(static_cast<int>(TileData::rank), chunk.data());" in header
     assert "setFilter" not in header
     assert "setDeflate" not in header
-    assert "allFiltersAvail" not in header
+    assert "' filter is not available" not in header
 
 
 def test_render_hdf5_writer_without_a_chunk_stores_the_arrays_as_they_are() -> None:
@@ -1130,16 +1157,15 @@ def test_render_hdf5_writer_without_a_chunk_stores_the_arrays_as_they_are() -> N
 
     assert "DSetCreatPropList" not in header
     assert "chunk" not in header
-    assert '"burn_time", H5::PredType::NATIVE_FLOAT, space);' in header
+    assert 'group_.createDataSet("burn_time", H5::PredType::NATIVE_FLOAT,' in header
+    assert "                             space);" in header
 
 
 def test_render_hdf5_reader_reports_a_filter_that_is_not_there() -> None:
     """An array read through a filter that is not there is reported as such."""
     header = render_hdf5_reader(HDF5_READER, DATASET)
 
-    assert "const H5::DSetCreatPropList plist =" in header
-    assert "array_burn_time_.getCreatePlist();" in header
-    assert "if (!plist.allFiltersAvail()) [[unlikely]] {" in header
+    assert "if (!array.getCreatePlist().allFiltersAvail()) [[unlikely]] {" in header
     assert '"\' is stored with a filter that is not "' in header
     assert '"in HDF5_PLUGIN_PATH");' in header
 
@@ -1158,7 +1184,7 @@ def test_render_hdf5_writer_include() -> None:
     writer = Hdf5Writer(name="SeedHdf5Writer", dataset="TileData", include=["state"])
     header = render_hdf5_writer(writer, DATASET)
 
-    assert 'group_.createDataSet(\n                    "state"' in header
+    assert 'group_.createDataSet("state", H5::PredType::NATIVE_INT8,' in header
     assert "burn_time" not in header
     assert "// Writes the array state" in header
 

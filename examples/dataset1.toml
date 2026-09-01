@@ -1,6 +1,6 @@
 # An exemplar specification
 # showing the n-dimensional array features of codegen-cpp,
-# and the HDF5 functions that fill those arrays in and write them back out.
+# and the HDF5 classes that fill those arrays in and write them back out.
 #
 # Generate the C++ header of this specification with:
 #
@@ -114,10 +114,12 @@ arrays = [
 #     Series series(1000);                       // allocated by you
 #     reader.read_dataset(series);
 #
-# The constructor opens one HDF5 dataset per array of the dataset,
-# named after the array, here `/run/series/timestamp` and so on,
-# and holds them open for as long as the reader lives,
-# so reading the same group again costs no more lookups.
+# The constructor opens the group and looks one HDF5 dataset up in it
+# per array of the dataset, named after the array,
+# here `/run/series/timestamp` and so on.
+# Every read looks them up again out of the group it holds,
+# so a group written again while the reader is alive
+# is read back as it stands rather than as it was.
 # Every array has to be there,
 # and to be stored with the datatype that the dataset declares for it,
 # which is compared against the predefined type of the array,
@@ -211,8 +213,20 @@ dataset = "Volume"
 #
 # It writes into the arrays the group already holds rather than creating them,
 # because a part says nothing about how large the whole is,
-# so `write_dataset` is what lays a group out
-# and `write_partial_dataset` is what fills it in piece by piece.
+# so laying a group out and filling it in are two separate steps.
+#
+# `create_dataset` is the other way to lay a group out.
+# It creates every array with the shape it is given,
+# one extent per dim of the dataset, and writes nothing into them,
+# where `write_dataset` asks for a dataset of the whole shape to write out:
+#
+#     std::array<std::size_t, 1> shape = {1000000000};
+#     writer.create_dataset(shape);              // and no memory for it
+#     writer.write_partial_dataset(window, offset);
+#
+# An array that is larger than memory is laid out that way
+# and filled in one part at a time,
+# so nothing larger than one part is ever allocated.
 [[hdf5_writer]]
 name = "SeriesHdf5Writer"
 dataset = "Series"
@@ -286,7 +300,9 @@ shuffle = true
 # Everything but `deflate` lives in a plugin that HDF5 loads at run time,
 # out of the directories that `HDF5_PLUGIN_PATH` names.
 # A writer looks for its filter before it writes anything through it,
-# and a reader looks for the filters of an array before it reads one,
+# a reader looks for the filters of an array before it reads one,
+# and `write_partial_dataset` looks for the filters of the array
+# it writes a part into,
 # so a plugin that is not there is reported rather than stumbled over.
 [[hdf5_writer]]
 name = "VolumeCompressedHdf5Writer"

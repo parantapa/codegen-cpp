@@ -60,8 +60,10 @@ columns = [
 # and the number of rows to return per batch:
 #
 #     MeasurementCsvReader reader("measurements.csv.gz", 100000);
+#     Measurement batch;
 #     while (reader.has_more_batches()) {
-#         Measurement batch = reader.read_batch();
+#         batch.clear();
+#         reader.read_batch(batch);
 #     }
 #
 # Three further arguments are optional:
@@ -115,8 +117,10 @@ default = { latitude = 0.0, longitude = 0.0 }
 # The generated class has the same interface as the CSV reader:
 #
 #     MeasurementParquetReader reader("measurements.parquet", 100000);
+#     Measurement batch;
 #     while (reader.has_more_batches()) {
-#         Measurement batch = reader.read_batch();
+#         batch.clear();
+#         reader.read_batch(batch);
 #     }
 #
 # The columns are selected by name,

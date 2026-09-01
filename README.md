@@ -2,19 +2,20 @@
 
 `codegen-cpp` is a C++ code generation utility written in Python.
 
-It can be used to genereate C++ code from TOML specification files.
-Presently it supports generation Struct-of-Array data structures
-and code to read those tables to and from CSV and Parquet files
+It can be used to generate C++ code from TOML specification files.
+Presently it supports generating Struct-of-Array data structures
+and code that reads those tables from,
+and writes them to, CSV and Parquet files
 using [Apache Arrow](https://arrow.apache.org).
 It also generates datasets of n-dimensional arrays
-and functions that read them from,
+and classes that read them from,
 and write them to, an [HDF5](https://www.hdfgroup.org/solutions/hdf5) file.
 
 ## Requirements
 
 `codegen-cpp` itself needs Python 3.12 or later.
 The code it generates needs a C++23 compiler,
-Apache Arrow built with the CSV and Parquet support,
+Apache Arrow built with CSV and Parquet support,
 and HDF5 built with its C++ API.
 
 ## Installation
@@ -85,12 +86,14 @@ int main() {
 }
 ```
 
-The `examples` directory holds two annotated specifications
+The `examples` directory holds three annotated specifications
 that double as a tutorial.
 `examples/table1.toml` covers tables
 and the CSV and Parquet classes that read and write them;
+`examples/table2.toml` covers the aggregate types
+that a column of a table may hold;
 `examples/dataset1.toml` covers datasets of n-dimensional arrays
-and the HDF5 functions that read and write those.
+and the HDF5 classes that read and write those.
 To see how a specification is parsed, without generating anything:
 
 ```bash
@@ -136,7 +139,7 @@ and a file of any size above it is not.
 Neither one holds more than a block at a time,
 which is what `--read-all` gives up.
 
-A column that a CSV holds but a table does not, a date among them,
+A column that a CSV holds but a table does not, such as a date,
 is declared as `str` and noted in a comment,
 because Arrow converts it to a string on the way in.
 
@@ -188,8 +191,9 @@ The writer is given the same `name_in_file` as the reader,
 so a table read out of one file is written back into its like;
 drop that section to write the names of the table instead.
 
-A file that names two of its columns the same is reported rather than
-described, because a reader selects its columns by name
+A file that names two of its columns the same
+is reported rather than described,
+because a reader selects its columns by name
 and cannot tell those two apart.
 
 ### From a Parquet file
@@ -226,7 +230,7 @@ The reader then names and defaults every part by its flattened key,
 so `biblio.first_page` is renamed and `topics.element.score` is defaulted,
 and a key that ends at an aggregate type takes no default.
 
-A column stored as something no table can hold, a timestamp among them,
+A column stored as something no table can hold, such as a timestamp,
 is left out rather than declared as something it is not,
 because a Parquet reader matches the type of what it reads exactly
 and would throw on the first batch.
@@ -261,7 +265,7 @@ and so on.
 | `hdf5_writer`    | a class writing a dataset into an HDF5 group    |
 
 Every section has a `name`,
-which is used verbatim as the name of the generated class or function.
+which is used verbatim as the name of the generated class.
 The names of all sections share one namespace and have to be unique.
 Every reader and writer of a table names the `table`
 it reads into or writes out,
@@ -272,24 +276,24 @@ A table declares its `columns`,
 each with a name used verbatim as a C++ member name,
 and one of the scalar types:
 
-| Type                     | C++ type                              |
-| ------------------------ | ------------------------------------- |
-| `i8`, `i16`, `i32`, `i64`| `std::int8_t` ... `std::int64_t`      |
-| `u8`, `u16`, `u32`, `u64`| `std::uint8_t` ... `std::uint64_t`    |
-| `f32`, `f64`             | `float`, `double`                     |
-| `bool`                   | `bool`                                |
-| `str`                    | `std::string`                         |
+| Type                      | C++ type                           |
+| ------------------------- | ---------------------------------- |
+| `i8`, `i16`, `i32`, `i64` | `std::int8_t` ... `std::int64_t`   |
+| `u8`, `u16`, `u32`, `u64` | `std::uint8_t` ... `std::uint64_t` |
+| `f32`, `f64`              | `float`, `double`                  |
+| `bool`                    | `bool`                             |
+| `str`                     | `std::string`                      |
 
 A column may also name an aggregate type
 declared by a `vector`, a `map` or a `struct` section of the same file.
 The three cover the three shapes a group of a Parquet file can have,
 and each is read from, and written to, that shape and no other:
 
-| Section  | C++                                     | Parquet             |
-| -------- | --------------------------------------- | ------------------- |
-| `vector` | `std::vector<element>`                  | a group annotated LIST |
-| `map`    | `std::map<key, value>`                  | a group annotated MAP  |
-| `struct` | a struct of one member per field        | a plain group          |
+| Section  | C++                              | Parquet                |
+| -------- | -------------------------------- | ---------------------- |
+| `vector` | `std::vector<element>`           | a group annotated LIST |
+| `map`    | `std::map<key, value>`           | a group annotated MAP  |
+| `struct` | a struct of one member per field | a plain group          |
 
 A `vector` declares the type of one `element`,
 a `map` the type of its `key` and of its `value`,
@@ -369,8 +373,8 @@ because a CSV holds no level below one.
 A `parquet_reader` or a `parquet_writer`
 reaches into a nested column with the same keys:
 the name of the column,
-followed by one step for every level below it,
-which is the name of a field of a struct,
+followed by one step for every level below it:
+the name of a field of a struct,
 `element` for the element of a vector,
 and `value` for the value of a map.
 So `biblio.first_page` is a field of a struct column,
@@ -405,12 +409,12 @@ so one chunk fits a dataset of any size.
 
 `compression` names the filter the chunks are compressed with:
 
-| Codec     | Level  | Where it comes from                    |
-| --------- | ------ | -------------------------------------- |
-| `none`    |        | the default, which compresses nothing   |
-| `deflate` | 0 to 9 | zlib, which is built into HDF5 itself   |
-| `zstd`    | 1 to 22| a plugin that HDF5 loads at run time    |
-| `lz4`     |        | a plugin that HDF5 loads at run time    |
+| Codec     | Level   | Where it comes from                   |
+| --------- | ------- | ------------------------------------- |
+| `none`    |         | the default, which compresses nothing |
+| `deflate` | 0 to 9  | zlib, which is built into HDF5 itself |
+| `zstd`    | 1 to 22 | a plugin that HDF5 loads at run time  |
+| `lz4`     |         | a plugin that HDF5 loads at run time  |
 
 `compression_level` tunes the codecs that take a level,
 and is an error for the ones that do not.
@@ -440,7 +444,7 @@ the standard library first and the libraries it binds to after it.
 The definitions follow in an order
 in which each one is declared after everything it names,
 so the tables and the datasets lead
-and the classes and functions over them follow.
+and the classes over them follow.
 
 Every aggregate type is written under the name that declares it,
 above the tables and the types that hold it:
@@ -576,12 +580,12 @@ The constructors take the path of the file,
 and readers also take the number of rows per batch.
 The remaining arguments are optional:
 
-| Class            | Optional arguments                                                            |
-| ---------------- | ----------------------------------------------------------------------------- |
-| `csv_reader`     | `use_threads` (false), `block_size` (128 MB), `compression` (guessed)         |
-| `parquet_reader` | `buffer_size` (128 MB)                                                        |
-| `csv_writer`     | `compression` (guessed), `compression_level` (the codec's default)            |
-| `parquet_writer` | `compression` (Zstandard), `compression_level`, `row_group_length` (128000)   |
+| Class            | Optional arguments                                                          |
+| ---------------- | --------------------------------------------------------------------------- |
+| `csv_reader`     | `use_threads` (false), `block_size` (128 MB), `compression` (guessed)       |
+| `parquet_reader` | `buffer_size` (128 MB)                                                      |
+| `csv_writer`     | `compression` (guessed), `compression_level` (the codec's default)          |
+| `parquet_writer` | `compression` (Zstandard), `compression_level`, `row_group_length` (128000) |
 
 For the CSV classes,
 the compression is guessed from the suffix of the file name,
@@ -599,16 +603,15 @@ class TileDataHdf5Reader {
   public:
     TileDataHdf5Reader(H5::H5File& file, const std::string& group_path);
 
-    void read_dataset(TileData& data);
+    void read_dataset(TileData& data) const;
     void read_partial_dataset(TileData& data,
-                              std::span<std::size_t> offset);
+                              std::span<const std::size_t> offset) const;
 };
 ```
 
 The constructor opens the group `group_path` of the open file
-and one HDF5 dataset per selected array, named after the array,
-and holds them open for as long as the reader lives,
-so reading the same group again costs no lookups of its own.
+and looks one HDF5 dataset up in it per selected array,
+named after the array.
 Every array has to be there,
 and to be stored with the datatype that the dataset declares for it.
 The datatype is compared against the `H5::PredType` of the array,
@@ -638,6 +641,10 @@ and their shape is checked when it reads,
 so a missing array or a datatype that does not match
 is reported by the constructor,
 and a shape that does not match by `read_dataset`.
+Every read opens them again out of the group the constructor holds,
+so a group that a writer lays out again while the reader is alive
+is read back as it stands rather than as it was;
+neither read changes the reader, so a `const` one reads as well.
 
 `read_partial_dataset` reads a contiguous part of every array
 through an HDF5 hyperslab.
@@ -679,8 +686,9 @@ class TileDataHdf5Writer {
     TileDataHdf5Writer(H5::H5File& file, const std::string& group_path);
 
     void write_dataset(const TileData& data);
+    void create_dataset(std::span<const std::size_t> shape);
     void write_partial_dataset(const TileData& data,
-                               std::span<std::size_t> offset);
+                               std::span<const std::size_t> offset);
 };
 ```
 
@@ -699,8 +707,7 @@ and writes the whole of `data` into the block of that shape
 that begins at `offset`.
 It writes into the arrays the group already holds rather than creating them,
 because a part says nothing about how large the whole is,
-so `write_dataset` is what lays a group out
-and `write_partial_dataset` is what fills it in piece by piece:
+so laying a group out and filling it in are two separate steps:
 
 ```cpp
 TileDataHdf5Writer writer(file, "/sim/tile");
@@ -716,6 +723,29 @@ and to be stored with the datatype the dataset declares,
 so a part is never quietly converted into an array
 that something else laid out differently.
 
+`create_dataset` is the other way to lay a group out.
+It creates every array with the shape `shape` names,
+one extent per dim of the dataset, and writes nothing into them,
+where `write_dataset` asks for a dataset of the whole shape to write out.
+An array that is larger than memory is laid out with `create_dataset`
+and filled in with `write_partial_dataset`,
+so nothing larger than one part is ever allocated:
+
+```cpp
+TileDataHdf5Writer writer(file, "/sim/tile");
+std::array<std::size_t, 2> shape = {1048576, 1024};
+writer.create_dataset(shape);                   // 1 M x 1 K, and no memory
+
+TileData row(1, 1024);
+for (std::size_t r = 0; r < 1048576; ++r) {
+    std::array<std::size_t, 2> offset = {r, 0};
+    writer.write_partial_dataset(row, offset);
+}
+```
+
+A shape of any other length is a `std::invalid_argument`,
+the way an offset of the wrong length is.
+
 An array the group already holds under the same name is replaced,
 whatever shape and datatype it was stored with;
 that is not an error.
@@ -728,9 +758,9 @@ on the way out, the same way the reader lays them out on the way in.
 The file has to be open for writing;
 a read-only file is reported like any other failure.
 
-A writer that declares a `chunk` builds one `H5::DSetCreatPropList`
-for every array it writes,
-cuts the chunk down to the shape `data` was allocated with,
+A writer that declares a `chunk` builds one `H5::DSetCreatPropList`,
+which every array it creates is given,
+cuts the chunk down to the shape those arrays are given,
 and puts the filters it declares on the list in the order they are applied,
 the shuffle filter first.
 Nothing of the sort is written for a writer that declares no layout,
@@ -739,7 +769,10 @@ which stores its arrays exactly as it always did.
 A filter has to be there before anything is written through it,
 so a writer looks for its own filters before it creates the first array,
 and a reader looks for the filters of an array before it reads one.
-Either one throws a `std::runtime_error` naming `HDF5_PLUGIN_PATH`
+A part written into an array that is already there
+goes through whatever filters that array was created with,
+so `write_partial_dataset` looks for those as well.
+Any of them throws a `std::runtime_error` naming `HDF5_PLUGIN_PATH`
 where the filter is missing,
 rather than leaving HDF5 to report it further down.
 Reading is otherwise unaware of compression:
@@ -766,7 +799,7 @@ python -m venv .venv
 ```
 
 The project is formatted with `black`,
-checked with `pycodestyle` and `pyright`.
+and checked with `pycodestyle` and `pyright`.
 
 ## Testing the generated C++ code
 

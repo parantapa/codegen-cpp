@@ -1,7 +1,7 @@
-// Integration test for the generated HDF5 readers.
-// It writes HDF5 files with the HDF5 C++ API,
+// Integration test for the generated HDF5 readers and writers.
+// It writes HDF5 files with the HDF5 C++ API and with the generated writers,
 // reads them back with the generated readers,
-// and checks the arrays and the errors that the readers report.
+// and checks the arrays and the errors that both of them report.
 
 #include <array>
 #include <cstdint>
@@ -739,11 +739,30 @@ void test_reports_a_filter_that_is_not_there() {
         return;
     }
 
-    H5::H5File file(kZstdFile, H5F_ACC_RDONLY);
-    const std::string read_error =
-        error_of([&] { read_into<GridHdf5Reader>(file, "/out", grid); });
-    CHECK(contains(read_error, "is stored with a filter that is not available"));
-    CHECK(contains(read_error, "HDF5_PLUGIN_PATH"));
+    {
+        H5::H5File file(kZstdFile, H5F_ACC_RDONLY);
+        const std::string read_error =
+            error_of([&] { read_into<GridHdf5Reader>(file, "/out", grid); });
+        CHECK(contains(read_error,
+                       "is stored with a filter that is not available"));
+        CHECK(contains(read_error, "HDF5_PLUGIN_PATH"));
+    }
+
+    // A part goes through the filter of the array it is written into,
+    // so that filter is looked for before anything is written.
+    {
+        H5::H5File file(kZstdFile, H5F_ACC_RDWR);
+        GridHdf5Writer writer(file, "/out");
+
+        Grid row(1, grid_cols);
+        fill_untouched(row);
+        const std::array<std::size_t, 2> offset = {0, 0};
+        const std::string part_error =
+            error_of([&] { writer.write_partial_dataset(row, offset); });
+        CHECK(contains(part_error,
+                       "is stored with a filter that is not available"));
+        CHECK(contains(part_error, "HDF5_PLUGIN_PATH"));
+    }
 }
 
 // A part of every array is read and written through a hyperslab,
@@ -917,6 +936,106 @@ void test_reports_a_part_written_into_a_group_without_the_array() {
     CHECK(contains(error, "'/out/temperature' is not in the HDF5 file"));
 }
 
+// A reader looks its arrays up again as it reads,
+// so a group written again after it was constructed
+// is read back as it stands rather than as it was.
+void test_reads_a_group_that_was_written_again() {
+    const std::string path = "written_again.h5";
+    {
+        Grid grid(grid_rows, grid_cols);
+        fill_untouched(grid);
+
+        H5::H5File file(path, H5F_ACC_TRUNC);
+        write_from<GridHdf5Writer>(file, "/out", grid);
+    }
+
+    H5::H5File file(path, H5F_ACC_RDWR);
+    const GridHdf5Reader reader(file, "/out");
+
+    // Every array the reader was constructed over is replaced here.
+    {
+        Grid grid(grid_rows, grid_cols);
+        fill_expected(grid);
+        write_from<GridHdf5Writer>(file, "/out", grid);
+    }
+
+    // Reading asks nothing of the reader, so a const one reads.
+    Grid grid(grid_rows, grid_cols);
+    reader.read_dataset(grid);
+    check_grid_holds_the_expected(grid);
+}
+
+// create_dataset lays a group out without a dataset of the whole shape,
+// which write_partial_dataset then fills in one part at a time.
+void test_creates_a_dataset_and_fills_it_in() {
+    const std::string path = "created_grid.h5";
+    {
+        H5::H5File file(path, H5F_ACC_TRUNC);
+        GridHdf5Writer writer(file, "/out");
+
+        const std::array<std::size_t, 2> shape = {grid_rows, grid_cols};
+        writer.create_dataset(shape);
+
+        // Only one row of the group is ever held in memory.
+        Grid row(1, grid_cols);
+        for (std::size_t r = 0; r < grid_rows; ++r) {
+            for (std::size_t col = 0; col < grid_cols; ++col) {
+                row.temperature[0, col] = expected_temperature(r, col);
+                row.kind[0, col] = expected_kind(r, col);
+                row.count[0, col] = expected_count(r, col);
+            }
+
+            const std::vector<std::size_t> offset = {r, 0};
+            writer.write_partial_dataset(row, offset);
+        }
+    }
+
+    H5::H5File file(path, H5F_ACC_RDONLY);
+    Grid grid(grid_rows, grid_cols);
+    read_into<GridHdf5Reader>(file, "/out", grid);
+    check_grid_holds_the_expected(grid);
+}
+
+// A created array replaces one of another shape and datatype, like a written
+// one, and is stored the way the dataset declares it.
+void test_create_replaces_an_array_that_is_there() {
+    const std::string path = "created_again.h5";
+    {
+        Grid grid(grid_rows, grid_cols);
+        fill_expected(grid);
+
+        H5::H5File file(path, H5F_ACC_TRUNC);
+        write_from<GridHdf5Writer>(file, "/out", grid);
+    }
+
+    {
+        H5::H5File file(path, H5F_ACC_RDWR);
+        GridHdf5Writer writer(file, "/out");
+
+        const std::array<std::size_t, 2> shape = {grid_rows + 1, grid_cols};
+        writer.create_dataset(shape);
+    }
+
+    // The arrays are there with the new shape, holding nothing in particular.
+    H5::H5File file(path, H5F_ACC_RDONLY);
+    Grid grid(grid_rows + 1, grid_cols);
+    CHECK(error_of([&] {
+              read_into<GridHdf5Reader>(file, "/out", grid);
+          }).empty());
+}
+
+// A shape says how large every array is along every dim, and no more.
+void test_reports_a_shape_of_the_wrong_size() {
+    const std::string path = "created_shape.h5";
+    H5::H5File file(path, H5F_ACC_TRUNC);
+    GridHdf5Writer writer(file, "/out");
+
+    const std::array<std::size_t, 1> shape = {grid_rows};
+    const std::string error = error_of([&] { writer.create_dataset(shape); });
+
+    CHECK(contains(error, "shape must hold one extent per dim of 'Grid'"));
+}
+
 void test_write_reports_a_file_that_is_open_for_reading() {
     const std::string path = write_test_file();
     H5::H5File file(path, H5F_ACC_RDONLY);
@@ -983,6 +1102,11 @@ int main(int argc, char** argv) {
     test_reports_an_offset_of_the_wrong_size();
     test_reports_a_part_that_does_not_fit();
     test_reports_a_part_written_into_a_group_without_the_array();
+
+    test_reads_a_group_that_was_written_again();
+    test_creates_a_dataset_and_fills_it_in();
+    test_create_replaces_an_array_that_is_there();
+    test_reports_a_shape_of_the_wrong_size();
 
     if (failures == 0) {
         std::printf("all checks passed\n");
