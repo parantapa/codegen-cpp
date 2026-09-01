@@ -283,6 +283,46 @@ def test_render_csv_reader_null_handling() -> None:
     )
 
 
+def test_render_csv_reader_default_section() -> None:
+    """A CSV reader takes its defaults keyed by column, as a Parquet one does."""
+    reader = CsvReader(name="PointReader", table="Point", default={"label": "n/a"})
+
+    header = render_csv_reader(reader, TABLE)
+
+    assert "column_id->Value(i)," in header
+    assert (
+        'column_label->IsNull(i) ? std::string("n/a") '
+        ": column_label->GetString(i)" in header
+    )
+    assert "\"column 'label' contains null values\"" not in header
+
+
+def test_render_csv_reader_names_a_column_in_the_file() -> None:
+    """A reader looks for the name the file gives a column."""
+    reader = CsvReader(name="PointReader", table="Point", name_in_file={"id": "Ident"})
+
+    header = render_csv_reader(reader, TABLE)
+
+    # The file is asked for the name it uses, in the declared order.
+    assert '            "Ident",\n            "label",\n' in header
+    assert '{"Ident", arrow::uint32()},' in header
+    assert '{"label", arrow::utf8()},' in header
+
+    # The table is still filled in through the name that declares the column.
+    assert "column_id->Value(i)," in header
+    assert "\"column 'id' contains null values\"" in header
+
+
+def test_render_csv_reader_escapes_the_name_in_the_file() -> None:
+    """A file names a column however it likes; the header still compiles."""
+    reader = CsvReader(name="PointReader", table="Point", name_in_file={"id": 'a"b\\c'})
+
+    header = render_csv_reader(reader, TABLE)
+
+    assert r'"a\"b\\c",' in header
+    assert r'{"a\"b\\c", arrow::uint32()},' in header
+
+
 def test_generate_defines_every_csv_reader(tmp_path: Path) -> None:
     """Generate defines a class for every CSV reader of the spec."""
     header = generate_into(tmp_path, EXAMPLE)
@@ -1139,6 +1179,18 @@ def test_render_parquet_reader_names_a_column_in_the_file() -> None:
     assert 'field_index(*schema, "ident", arrow::uint32()),' in header
     assert 'if (schema.field(0)->name() != "ident") [[unlikely]] {' in header
     assert "column_id->Value(i)," in header
+
+
+def test_render_parquet_reader_escapes_the_name_in_the_file() -> None:
+    """A file names a column however it likes; the header still compiles."""
+    reader = ParquetReader(
+        name="PointParquetReader", table="Point", name_in_file={"id": 'a"b\\c'}
+    )
+
+    header = render_parquet_reader(reader, TABLE)
+
+    assert r'field_index(*schema, "a\"b\\c", arrow::uint32()),' in header
+    assert r'->name() != "a\"b\\c")' in header
 
 
 def test_render_parquet_writer_builds_a_nested_column() -> None:

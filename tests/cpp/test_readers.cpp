@@ -244,6 +244,43 @@ void test_csv_rejects_a_null_in_a_required_column() {
     CHECK(contains(error, "column 'id' contains null values"));
 }
 
+// The same rows, under the names that PointRenamingCsvReader looks for,
+// in an order of their own and beside a column that the table does not hold.
+const std::string kRenamedCsv =
+    "Score (mean),flag,Point ID,label,extra\n"
+    "1.5,true,10,alpha,x\n"
+    ",false,11,beta,y\n";
+
+void test_csv_reads_the_names_of_the_file() {
+    write_file("renamed_points.csv", kRenamedCsv);
+
+    PointRenamingCsvReader reader("renamed_points.csv", 4);
+    Point points;
+    reader.read_all(points);
+
+    CHECK(points.size() == 2);
+    CHECK(points.id == (std::vector<std::int64_t>{10, 11}));
+    CHECK(points[0].label == "alpha");
+    CHECK(points[1].label == "beta");
+    CHECK(points[0].score == 1.5);
+    CHECK(points[0].flag == true);
+    CHECK(points[1].flag == false);
+
+    // 'score' takes a default, which replaces the missing value.
+    CHECK(points[1].score == -1.5);
+}
+
+void test_csv_names_a_renamed_column_the_way_the_table_does() {
+    write_file("bad_renamed_points.csv",
+               "Score (mean),flag,Point ID,label\n1.5,true,,alpha\n");
+
+    PointRenamingCsvReader reader("bad_renamed_points.csv", 4);
+    Point rows;
+    const std::string error = error_of([&] { reader.read_batch(rows); });
+
+    CHECK(contains(error, "column 'id' contains null values"));
+}
+
 void test_csv_reports_a_missing_file() {
     const std::string error =
         error_of([] { PointCsvReader reader("no_such_file.csv", 4); });
@@ -588,6 +625,8 @@ int main() {
     test_csv_reader_compression_can_be_given();
     test_csv_reader_options();
     test_csv_rejects_a_null_in_a_required_column();
+    test_csv_reads_the_names_of_the_file();
+    test_csv_names_a_renamed_column_the_way_the_table_does();
     test_csv_reports_a_missing_file();
 
     test_parquet_reads_every_row(arrow::Compression::SNAPPY, "points.parquet");

@@ -11,7 +11,6 @@ from .spec import (
     MAP_STEP,
     VECTOR_STEP,
     Aggregate,
-    Column,
     CsvReader,
     CsvWriter,
     Dataset,
@@ -145,13 +144,6 @@ def hdf5_native_type(type: ScalarType) -> str:
     return HDF5_NATIVE_TYPES[type]
 
 
-def required_columns(table: Table, reader: Reader) -> list[Column]:
-    """Return the columns of TABLE that READER does not allow to be null."""
-    return [
-        column for column in table.columns if column.name not in reader.default_values
-    ]
-
-
 # The characters that need to be escaped in a C++ string literal.
 CPP_ESCAPES = {
     "\\": "\\\\",
@@ -160,6 +152,12 @@ CPP_ESCAPES = {
     "\r": "\\r",
     "\t": "\\t",
 }
+
+
+def cpp_string(value: str) -> str:
+    """Return VALUE as a C++ string literal, quotes and all."""
+    escaped = "".join(CPP_ESCAPES.get(c, c) for c in value)
+    return f'"{escaped}"'
 
 
 def cpp_literal(value: DefaultValue, type: ScalarType) -> str:
@@ -172,8 +170,7 @@ def cpp_literal(value: DefaultValue, type: ScalarType) -> str:
     if type is ScalarType.bool:
         literal = "true" if value else "false"
     elif type is ScalarType.str:
-        escaped = "".join(CPP_ESCAPES.get(c, c) for c in str(value))
-        literal = f'"{escaped}"'
+        literal = cpp_string(str(value))
     elif type in (ScalarType.f32, ScalarType.f64):
         literal = repr(float(value))  # type: ignore[arg-type]
     else:
@@ -349,7 +346,6 @@ def table_nodes(
     names_in_file: dict[str, str] = {}
     if isinstance(generated, Reader):
         defaults.update(generated.default_values)
-    if isinstance(generated, ParquetReader):
         defaults.update(generated.default)
         names_in_file = generated.name_in_file
 
@@ -386,10 +382,10 @@ def make_environment() -> Environment:
     env.filters["arrow_type"] = arrow_type
     env.filters["arrow_array_type"] = arrow_array_type
     env.filters["arrow_builder_type"] = arrow_builder_type
-    env.filters["required_columns"] = required_columns
     env.filters["selected_arrays"] = selected_arrays
     env.filters["hdf5_native_type"] = hdf5_native_type
     env.filters["cpp_literal"] = cpp_literal
+    env.filters["cpp_string"] = cpp_string
     return env
 
 
@@ -605,10 +601,12 @@ def render_csv_reader(csv_reader: CsvReader, table: Table) -> str:
     """
     Return the C++ definition of CSV_READER.
 
-    TABLE is the table that CSV_READER fills in.
+    TABLE is the table that CSV_READER fills in;
+    a CSV holds no aggregate type, so its columns are all scalars.
     """
+    columns = table_nodes(table, None, csv_reader)
     template = ENVIRONMENT.get_template("csv_reader.hpp.jinja")
-    return template.render(csv_reader=csv_reader, table=table)
+    return template.render(csv_reader=csv_reader, table=table, columns=columns)
 
 
 def render_parquet_reader(

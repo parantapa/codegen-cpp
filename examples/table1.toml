@@ -93,6 +93,26 @@ default_values = { quality = -1, humidity = 0.0, is_valid = false, note = "" }
 name = "StationCsvReader"
 table = "Station"
 
+# `default` says what `default_values` says, one column at a time,
+# and `name_in_file` says what the file calls a column
+# where that is not the name the specification uses,
+# so a header awkwardly spelled in the file
+# is not awkwardly spelled in every line of C++ that reads it.
+# One column takes its default from `default_values` or from `default`
+# and never from both,
+# and two columns may not be renamed to one name.
+#
+# A parquet_reader takes the same two,
+# keyed by the flattened key of any part of a nested column;
+# see `examples/table2.toml`.
+# A CSV holds a column and no level below it,
+# so a key of a csv_reader is the name of a column and nothing else.
+[[csv_reader]]
+name = "StationImportCsvReader"
+table = "Station"
+name_in_file = { station_id = "Station ID", name = "Station Name" }
+default = { latitude = 0.0, longitude = 0.0 }
+
 
 # A parquet_reader reads a Parquet file into the table it names.
 # The generated class has the same interface as the CSV reader:

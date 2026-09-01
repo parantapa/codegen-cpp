@@ -72,6 +72,15 @@ def test_parse_csv_readers() -> None:
     # A reader may leave every column required.
     assert spec.csv_readers[1].default_values == {}
 
+    # A reader may say the same thing one column at a time,
+    # and say what the file calls a column.
+    reader = spec.csv_readers[2]
+    assert reader.default == {"latitude": 0.0, "longitude": 0.0}
+    assert reader.name_in_file == {
+        "station_id": "Station ID",
+        "name": "Station Name",
+    }
+
 
 @pytest.mark.parametrize("section", ["table", "dataset", "csv_reader"])
 def test_single_table_section_rejected(tmp_path: Path, section: str) -> None:
@@ -207,6 +216,133 @@ def test_default_values_accepted(tmp_path: Path) -> None:
     assert spec.csv_readers[0].default_values == {"a": -3, "b": "n/a"}
 
 
+def test_csv_reader_default_and_name_in_file_accepted(tmp_path: Path) -> None:
+    """A CSV reader says what a Parquet reader says, keyed by column."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_TABLE + "[[csv_reader]]\n"
+        'name = "R"\n'
+        'table = "t"\n'
+        'default = { b = "n/a" }\n'
+        'name_in_file = { a = "Column A" }\n',
+    )
+
+    spec = parse_spec(spec_file)
+
+    reader = spec.csv_readers[0]
+    assert reader.default == {"b": "n/a"}
+    assert reader.name_in_file == {"a": "Column A"}
+
+
+def test_csv_reader_default_and_name_in_file_default_to_empty(tmp_path: Path) -> None:
+    """A CSV reader that says neither reads every column by its own name."""
+    spec_file = write_spec(
+        tmp_path, GOOD_TABLE + '[[csv_reader]]\nname = "R"\ntable = "t"\n'
+    )
+
+    reader = parse_spec(spec_file).csv_readers[0]
+
+    assert reader.default == {}
+    assert reader.name_in_file == {}
+
+
+@pytest.mark.parametrize("key", ["zzz", "a.element", "b.x"])
+def test_csv_reader_default_for_an_unknown_column_rejected(
+    tmp_path: Path, key: str
+) -> None:
+    """A CSV holds the columns of a table and no level below them."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_TABLE + "[[csv_reader]]\n"
+        'name = "R"\n'
+        'table = "t"\n'
+        f'default = {{ "{key}" = 1 }}\n',
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=f"csv_reader 'R' has a default for '{key}', "
+        "which table 't' does not hold",
+    ):
+        parse_spec(spec_file)
+
+
+def test_csv_reader_default_of_the_wrong_type_rejected(tmp_path: Path) -> None:
+    """A default has to fit the type of the column it names."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_TABLE + "[[csv_reader]]\n"
+        'name = "R"\n'
+        'table = "t"\n'
+        'default = { a = "x" }\n',
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="csv_reader 'R' has a default for 'a' that expects an integer",
+    ):
+        parse_spec(spec_file)
+
+
+def test_csv_reader_with_a_default_value_and_a_default_rejected(
+    tmp_path: Path,
+) -> None:
+    """One column takes its default from one of the two, not from both."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_TABLE + "[[csv_reader]]\n"
+        'name = "R"\n'
+        'table = "t"\n'
+        "default_values = { a = 1 }\n"
+        "default = { a = 2 }\n",
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="csv_reader 'R' declares both a default_value and a default for 'a'",
+    ):
+        parse_spec(spec_file)
+
+
+def test_csv_reader_name_in_file_for_an_unknown_column_rejected(
+    tmp_path: Path,
+) -> None:
+    """A reader may only rename a column that the table declares."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_TABLE + "[[csv_reader]]\n"
+        'name = "R"\n'
+        'table = "t"\n'
+        'name_in_file = { zzz = "x" }\n',
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="csv_reader 'R' has a name_in_file for 'zzz', "
+        "which table 't' does not hold",
+    ):
+        parse_spec(spec_file)
+
+
+def test_csv_reader_that_reads_two_columns_by_one_name_rejected(
+    tmp_path: Path,
+) -> None:
+    """Renaming may not make two columns of a table share a name."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_TABLE + "[[csv_reader]]\n"
+        'name = "R"\n'
+        'table = "t"\n'
+        'name_in_file = { a = "b" }\n',
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="csv_reader 'R' reads two parts of table 't' by one name: b",
+    ):
+        parse_spec(spec_file)
+
+
 def test_table_without_columns_rejected(tmp_path: Path) -> None:
     """A table must declare at least one column."""
     spec_file = write_spec(tmp_path, '[[table]]\nname = "t"\ncolumns = []\n')
@@ -223,6 +359,7 @@ def test_annotated_example_parses() -> None:
     assert [r.name for r in spec.csv_readers] == [
         "MeasurementCsvReader",
         "StationCsvReader",
+        "StationImportCsvReader",
     ]
     assert [r.name for r in spec.parquet_readers] == ["MeasurementParquetReader"]
     assert [w.name for w in spec.csv_writers] == [

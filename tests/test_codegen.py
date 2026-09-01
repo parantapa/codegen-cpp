@@ -5,9 +5,10 @@ from codegen_cpp.codegen import (
     ENVIRONMENT,
     HDF5_NATIVE_TYPES,
     cpp_literal,
+    cpp_string,
     cpp_type,
     hdf5_native_type,
-    required_columns,
+    table_nodes,
 )
 from codegen_cpp.spec import (
     NUMERIC_TYPES,
@@ -44,34 +45,41 @@ TABLE = Table(
 )
 
 
-def test_required_columns_skips_the_ones_with_a_default() -> None:
-    """Required columns are the columns that may not be null, in order."""
+def test_table_nodes_without_a_reader() -> None:
+    """A column of a table is its own node, named after itself."""
+    nodes = table_nodes(TABLE)
+
+    assert [node.key for node in nodes] == ["id", "label", "score"]
+    assert [node.name_in_file for node in nodes] == ["id", "label", "score"]
+    assert all(node.default is None for node in nodes)
+
+
+def test_table_nodes_of_a_csv_reader_carry_its_defaults() -> None:
+    """A column with a default value is the one that may hold a null."""
     reader = CsvReader(name="R", table="Point", default_values={"label": ""})
 
-    assert [c.name for c in required_columns(TABLE, reader)] == ["id", "score"]
+    nodes = table_nodes(TABLE, None, reader)
+
+    assert [node.default for node in nodes] == [None, 'std::string("")', None]
 
 
-def test_required_columns_without_default_values() -> None:
-    """Every column is required when no column has a default value."""
-    reader = CsvReader(name="R", table="Point")
+def test_table_nodes_of_a_csv_reader_carry_its_default_section() -> None:
+    """A CSV reader keys its defaults by the names of the columns."""
+    reader = CsvReader(name="R", table="Point", default={"score": -1.5})
 
-    assert required_columns(TABLE, reader) == TABLE.columns
+    nodes = table_nodes(TABLE, None, reader)
 
-
-def test_required_columns_with_every_column_defaulted() -> None:
-    """No column is required when every column has a default value."""
-    reader = CsvReader(
-        name="R",
-        table="Point",
-        default_values={"id": 0, "label": "", "score": 0.0},
-    )
-
-    assert required_columns(TABLE, reader) == []
+    assert [node.default for node in nodes] == [None, None, "double(-1.5)"]
 
 
-def test_required_columns_is_a_filter() -> None:
-    """The filter is registered on the environment used by the templates."""
-    assert ENVIRONMENT.filters["required_columns"] is required_columns
+def test_table_nodes_of_a_csv_reader_carry_its_names_in_the_file() -> None:
+    """A CSV reader looks for the name the file gives a column."""
+    reader = CsvReader(name="R", table="Point", name_in_file={"id": "ident"})
+
+    nodes = table_nodes(TABLE, None, reader)
+
+    assert [node.name_in_file for node in nodes] == ["ident", "label", "score"]
+    assert [node.member for node in nodes] == ["id", "label", "score"]
 
 
 def test_cpp_literal() -> None:
@@ -90,6 +98,19 @@ def test_cpp_literal_escapes_strings() -> None:
     assert cpp_literal('a"b', ScalarType.str) == 'std::string("a\\"b")'
     assert cpp_literal("a\\b", ScalarType.str) == 'std::string("a\\\\b")'
     assert cpp_literal("a\nb", ScalarType.str) == 'std::string("a\\nb")'
+
+
+def test_cpp_string() -> None:
+    """A name that reaches the generated code is escaped for a C++ literal."""
+    assert cpp_string("id") == '"id"'
+    assert cpp_string('size ("m")') == '"size (\\"m\\")"'
+    assert cpp_string("a\\b") == '"a\\\\b"'
+    assert cpp_string("a\tb") == '"a\\tb"'
+
+
+def test_cpp_string_is_a_filter() -> None:
+    """The filter is registered on the environment used by the templates."""
+    assert ENVIRONMENT.filters["cpp_string"] is cpp_string
 
 
 def test_every_numeric_type_has_an_hdf5_spelling() -> None:

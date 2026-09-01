@@ -185,9 +185,20 @@ when that column is null in the input file.
 A null in any other column is an error.
 The value has to fit the type of its column.
 
-A `parquet_reader` says the same thing about the parts of a nested column
-with `default`, and says what the file calls one with `name_in_file`.
-Both are keyed by the flattened key of the part they name:
+A table reader takes `default` and `name_in_file` as well,
+which say the same thing about one part of the table at a time,
+keyed by the flattened key of that part.
+`default` is the value stored where the file holds a null,
+and `name_in_file` is the name the file gives the part,
+where that is not the name the specification uses,
+so a column awkwardly named in the file
+is not awkwardly named in every line of C++ that touches it.
+Declaring both a `default_value` and a `default` for one part is an error,
+and so is renaming two parts of one group to one name.
+
+For a `csv_reader` a flattened key is the name of a column and nothing else,
+because a CSV holds no level below one.
+A `parquet_reader` reaches into a nested column with the same two keys:
 the name of the column,
 followed by one step for every level below it,
 which is the name of a field of a struct,

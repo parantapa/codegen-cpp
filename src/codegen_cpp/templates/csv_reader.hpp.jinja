@@ -1,15 +1,16 @@
-{%- set required = table | required_columns(csv_reader) %}
-{%- macro column_value(column) -%}
-{%- set array = "column_" ~ column.name -%}
-{%- if column.type.value == "str" -%}
-{%- set read = array ~ "->GetString(i)" -%}
+{%- set required = columns | selectattr("default", "none") | list %}
+{#- The value of one column of a table,
+    read out of the array that holds it at index. -#}
+{%- macro column_value(column, array, index) -%}
+{%- if column.is_string -%}
+{%- set read = array ~ "->GetString(" ~ index ~ ")" -%}
 {%- else -%}
-{%- set read = array ~ "->Value(i)" -%}
+{%- set read = array ~ "->Value(" ~ index ~ ")" -%}
 {%- endif -%}
-{%- if column in required -%}
+{%- if column.default is none -%}
 {{ read }}
 {%- else -%}
-{{ array }}->IsNull(i) ? {{ csv_reader.default_values[column.name] | cpp_literal(column.type) }} : {{ read }}
+{{ array }}->IsNull({{ index }}) ? {{ column.default }} : {{ read }}
 {%- endif -%}
 {%- endmacro %}
 
@@ -55,15 +56,17 @@ class {{ csv_reader.name }} {
         auto convert_options = arrow::csv::ConvertOptions::Defaults();
 
         {# Read only the columns of the table, in the order
-           in which they are declared, and with their declared types. -#}
+           in which they are declared, and with their declared types.
+           A column is named the way the file names it,
+           which is the name of the column unless the reader renames it. -#}
         convert_options.include_columns = {
-{%- for column in table.columns %}
-            "{{ column.name }}",
+{%- for column in columns %}
+            {{ column.name_in_file | cpp_string }},
 {%- endfor %}
         };
         convert_options.column_types = {
-{%- for column in table.columns %}
-            {"{{ column.name }}", {{ column.type | arrow_type }}},
+{%- for column in columns %}
+            {{ "{" }}{{ column.name_in_file | cpp_string }}, {{ column.arrow }}},
 {%- endfor %}
         };
 
@@ -171,16 +174,16 @@ class {{ csv_reader.name }} {
     std::int64_t append_rows({{ table.name }}& table, std::int64_t wanted) {
         const std::int64_t available = batch_->num_rows() - offset_;
         const std::int64_t rows = std::min(available, wanted);
-{%- for column in table.columns %}
-        const auto* column_{{ column.name }} =
-            static_cast<const {{ column.type | arrow_array_type }}*>(
+{%- for column in columns %}
+        const auto* column_{{ column.member }} =
+            static_cast<const {{ column.array_type }}*>(
                 batch_->column({{ loop.index0 }}).get());
 {%- endfor %}
 
         for (std::int64_t i = offset_; i < offset_ + rows; ++i) {
             table.push_back(
-{%- for column in table.columns %}
-                {{ column_value(column) }}{% if not loop.last %},{% endif %}
+{%- for column in columns %}
+                {{ column_value(column, "column_" ~ column.member, "i") }}{% if not loop.last %},{% endif %}
 {%- endfor %});
         }
 
@@ -191,11 +194,11 @@ class {{ csv_reader.name }} {
     {# Throw if a column that is not nullable contains a null value. -#}
     static void check_nulls(
 {%- if required %}const arrow::RecordBatch& batch) {
-{%- for column in table.columns %}
-{%- if column in required %}
+{%- for column in columns %}
+{%- if column.default is none %}
         if (batch.column({{ loop.index0 }})->null_count() != 0) [[unlikely]] {
             throw std::runtime_error(
-                "column '{{ column.name }}' contains null values");
+                "column '{{ column.member }}' contains null values");
         }
 {%- endif %}
 {%- endfor %}

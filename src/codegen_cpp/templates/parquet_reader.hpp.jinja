@@ -67,7 +67,7 @@ class {{ parquet_reader.name }} {
            in which they are declared. -#}
         const std::vector<int> columns = {
 {%- for column in columns %}
-            field_index(*schema, "{{ column.name_in_file }}", {{ column.arrow }}),
+            field_index(*schema, {{ column.name_in_file | cpp_string }}, {{ column.arrow }}),
 {%- endfor %}
         };
 {%- else %}
@@ -77,7 +77,7 @@ class {{ parquet_reader.name }} {
            and every one of them is read. -#}
         const std::vector<int> columns = leaf_columns({
 {%- for column in columns %}
-            "{{ column.name_in_file }}",
+            {{ column.name_in_file | cpp_string }},
 {%- endfor %}
         });
 {%- endif %}
@@ -253,7 +253,7 @@ class {{ parquet_reader.name }} {
                                      "' is read with unexpected columns");
         }
 {%- for column in columns %}
-        if (schema.field({{ loop.index0 }})->name() != "{{ column.name_in_file }}") [[unlikely]] {
+        if (schema.field({{ loop.index0 }})->name() != {{ column.name_in_file | cpp_string }}) [[unlikely]] {
             throw std::runtime_error("'" + parquet_file_ +
                                      "' is read with unexpected columns");
         }
@@ -336,7 +336,7 @@ class {{ parquet_reader.name }} {
     void bind_{{ node.var }}(const arrow::Array& source, const std::string& where) {
         const arrow::StructArray& array = *as_struct(source, where);
 {%- for field in node.fields %}
-        bind_{{ field.var }}(*field_of(array, "{{ field.name_in_file }}", where),
+        bind_{{ field.var }}(*field_of(array, {{ field.name_in_file | cpp_string }}, where),
 {{ " " * (field.var | length + 14) }}where + ".{{ field.step }}");
 {%- endfor %}
     }

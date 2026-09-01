@@ -14,6 +14,14 @@ name = "PointCsvReader"
 table = "Point"
 default_values = { label = "missing", score = -1.5 }
 
+# Reads the same table out of a file that names two of its columns
+# the way no C++ member could be named.
+[[csv_reader]]
+name = "PointRenamingCsvReader"
+table = "Point"
+name_in_file = { id = "Point ID", score = "Score (mean)" }
+default = { label = "missing", score = -1.5 }
+
 [[parquet_reader]]
 name = "PointParquetReader"
 table = "Point"
