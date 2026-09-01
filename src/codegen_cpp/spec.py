@@ -562,7 +562,7 @@ def table_class_keys(
 
 
 class DatasetClass(BaseModel):
-    """The fields shared by every C++ function generated for a dataset."""
+    """The fields shared by every C++ class generated for a dataset."""
 
     KIND: ClassVar[str] = "dataset class"
 
@@ -590,7 +590,7 @@ COMPRESSION_LEVELS = {
 
 
 class Hdf5Class(DatasetClass):
-    """The fields shared by every function over the arrays of an HDF5 group."""
+    """The fields shared by every class over the arrays of an HDF5 group."""
 
     KIND: ClassVar[str] = "hdf5 class"
 
@@ -608,13 +608,13 @@ class Hdf5Class(DatasetClass):
 
 
 class Hdf5Reader(Hdf5Class):
-    """A function reading the arrays of a dataset out of an HDF5 group."""
+    """A class reading the arrays of a dataset out of an HDF5 group."""
 
     KIND: ClassVar[str] = "hdf5_reader"
 
 
 class Hdf5Writer(Hdf5Class):
-    """A function writing the arrays of a dataset into an HDF5 group."""
+    """A class writing the arrays of a dataset into an HDF5 group."""
 
     KIND: ClassVar[str] = "hdf5_writer"
 
@@ -737,7 +737,7 @@ class Spec(BaseModel):
 
     @property
     def hdf5_classes(self) -> list[Hdf5Class]:
-        """Return every function generated over an HDF5 group."""
+        """Return every class generated over an HDF5 group."""
         return [*self.hdf5_readers, *self.hdf5_writers]
 
     @property

@@ -45,6 +45,23 @@ bool contains(const std::string& text, const std::string& part) {
     return text.find(part) != std::string::npos;
 }
 
+// Open a reader on the group path of file and read it into data.
+// A reader reports a missing or ill stored array as it is constructed,
+// and a shape that does not match as it reads,
+// so a test of either one goes through this.
+template <typename Reader, typename Data>
+void read_into(H5::H5File& file, const std::string& path, Data& data) {
+    Reader reader(file, path);
+    reader.read_dataset(data);
+}
+
+// Open a writer on the group path of file and write data into it.
+template <typename Writer, typename Data>
+void write_from(H5::H5File& file, const std::string& path, const Data& data) {
+    Writer writer(file, path);
+    writer.write_dataset(data);
+}
+
 // The shape that every array of 'Grid' is written and read with.
 constexpr hsize_t grid_rows = 2;
 constexpr hsize_t grid_cols = 3;
@@ -212,7 +229,9 @@ void test_reads_every_array() {
 
     Grid grid(grid_rows, grid_cols);
     fill_untouched(grid);
-    read_grid(file, "/sim/grid", grid);
+
+    GridHdf5Reader reader(file, "/sim/grid");
+    reader.read_dataset(grid);
 
     check_grid_holds_the_expected(grid);
 }
@@ -223,7 +242,7 @@ void test_include_reads_only_the_arrays_it_lists() {
 
     Grid grid(grid_rows, grid_cols);
     fill_untouched(grid);
-    read_grid_temperature(file, "/sim/grid", grid);
+    read_into<GridTemperatureHdf5Reader>(file, "/sim/grid", grid);
 
     for (std::size_t row = 0; row < grid_rows; ++row) {
         for (std::size_t col = 0; col < grid_cols; ++col) {
@@ -240,7 +259,7 @@ void test_exclude_reads_every_other_array() {
 
     Grid grid(grid_rows, grid_cols);
     fill_untouched(grid);
-    read_grid_labels(file, "/sim/grid", grid);
+    read_into<GridLabelsHdf5Reader>(file, "/sim/grid", grid);
 
     for (std::size_t row = 0; row < grid_rows; ++row) {
         for (std::size_t col = 0; col < grid_cols; ++col) {
@@ -258,7 +277,7 @@ void test_reads_a_column_major_dataset() {
     H5::H5File file(path, H5F_ACC_RDONLY);
 
     Field field(field_x, field_y, field_z);
-    read_field(file, "/sim/field", field);
+    read_into<FieldHdf5Reader>(file, "/sim/field", field);
 
     check_field_holds_the_expected(field);
 }
@@ -269,7 +288,7 @@ void test_reports_a_missing_group() {
 
     Grid grid(grid_rows, grid_cols);
     const std::string error =
-        error_of([&] { read_grid(file, "/sim/missing", grid); });
+        error_of([&] { read_into<GridHdf5Reader>(file, "/sim/missing", grid); });
 
     CHECK(contains(error, "failed to read '/sim/missing'"));
 }
@@ -287,7 +306,8 @@ void test_reports_a_missing_array() {
 
     H5::H5File file(path, H5F_ACC_RDONLY);
     Grid grid(grid_rows, grid_cols);
-    const std::string error = error_of([&] { read_grid(file, "/grid", grid); });
+    const std::string error =
+        error_of([&] { read_into<GridHdf5Reader>(file, "/grid", grid); });
 
     CHECK(contains(error, "'/grid/kind' is not in the HDF5 file"));
 }
@@ -313,7 +333,7 @@ void test_a_skipped_array_may_be_missing() {
     Grid grid(grid_rows, grid_cols);
     fill_untouched(grid);
     const std::string error =
-        error_of([&] { read_grid_temperature(file, "/grid", grid); });
+        error_of([&] { read_into<GridTemperatureHdf5Reader>(file, "/grid", grid); });
 
     CHECK(error.empty());
     CHECK(grid.temperature[0, 0] == expected_temperature(0, 0));
@@ -330,7 +350,8 @@ void test_reports_a_shape_that_does_not_match() {
 
     H5::H5File file(path, H5F_ACC_RDONLY);
     Grid grid(grid_rows, grid_cols);
-    const std::string error = error_of([&] { read_grid(file, "/grid", grid); });
+    const std::string error =
+        error_of([&] { read_into<GridHdf5Reader>(file, "/grid", grid); });
 
     CHECK(contains(error, "'/grid/temperature' has extent 3 instead of 2"));
     CHECK(contains(error, "along dimension 0"));
@@ -340,7 +361,12 @@ void test_reports_a_rank_that_does_not_match() {
     const std::string path = "wrong_rank.h5";
     {
         H5::H5File file(path, H5F_ACC_TRUNC);
-        H5::Group group = file.createGroup("/grid");
+        write_grid_group(file, "/grid");
+
+        // One array alone is stored with the wrong rank, so the reader opens
+        // all three and reports the rank as it reads rather than before.
+        H5::Group group = file.openGroup("/grid");
+        group.unlink("temperature");
         const std::vector<hsize_t> dims{grid_rows * grid_cols};
         write_array(group, "temperature", dims, H5::PredType::IEEE_F64LE,
                     H5::PredType::NATIVE_DOUBLE,
@@ -349,7 +375,8 @@ void test_reports_a_rank_that_does_not_match() {
 
     H5::H5File file(path, H5F_ACC_RDONLY);
     Grid grid(grid_rows, grid_cols);
-    const std::string error = error_of([&] { read_grid(file, "/grid", grid); });
+    const std::string error =
+        error_of([&] { read_into<GridHdf5Reader>(file, "/grid", grid); });
 
     CHECK(contains(error, "'/grid/temperature' does not have rank 2"));
 }
@@ -369,7 +396,8 @@ void check_grid_datatype_is_rejected(const std::string& path,
 
     H5::H5File file(path, H5F_ACC_RDONLY);
     Grid grid(grid_rows, grid_cols);
-    const std::string error = error_of([&] { read_grid(file, "/grid", grid); });
+    const std::string error =
+        error_of([&] { read_into<GridHdf5Reader>(file, "/grid", grid); });
 
     CHECK(contains(error, rejected));
 }
@@ -412,13 +440,16 @@ void test_writes_a_row_major_dataset() {
         fill_expected(grid);
 
         H5::H5File file(path, H5F_ACC_TRUNC);
-        write_grid(file, "/out", grid);
+        GridHdf5Writer writer(file, "/out");
+        writer.write_dataset(grid);
     }
 
     H5::H5File file(path, H5F_ACC_RDONLY);
     Grid grid(grid_rows, grid_cols);
     fill_untouched(grid);
-    read_grid(file, "/out", grid);
+
+    GridHdf5Reader reader(file, "/out");
+    reader.read_dataset(grid);
 
     check_grid_holds_the_expected(grid);
 }
@@ -433,12 +464,12 @@ void test_writes_a_column_major_dataset() {
         fill_expected(field);
 
         H5::H5File file(path, H5F_ACC_TRUNC);
-        write_field(file, "/out", field);
+        write_from<FieldHdf5Writer>(file, "/out", field);
     }
 
     H5::H5File file(path, H5F_ACC_RDONLY);
     Field field(field_x, field_y, field_z);
-    read_field(file, "/out", field);
+    read_into<FieldHdf5Reader>(file, "/out", field);
 
     check_field_holds_the_expected(field);
 }
@@ -450,7 +481,7 @@ void test_write_creates_the_groups_that_are_missing() {
         fill_expected(grid);
 
         H5::H5File file(path, H5F_ACC_TRUNC);
-        write_grid(file, "/a/b/c", grid);
+        write_from<GridHdf5Writer>(file, "/a/b/c", grid);
     }
 
     H5::H5File file(path, H5F_ACC_RDONLY);
@@ -458,7 +489,7 @@ void test_write_creates_the_groups_that_are_missing() {
     CHECK(file.openGroup("/a").nameExists("b"));
 
     Grid grid(grid_rows, grid_cols);
-    read_grid(file, "/a/b/c", grid);
+    read_into<GridHdf5Reader>(file, "/a/b/c", grid);
     check_grid_holds_the_expected(grid);
 }
 
@@ -476,15 +507,17 @@ void test_write_replaces_the_arrays_that_are_there() {
         }
 
         H5::H5File file(path, H5F_ACC_TRUNC);
-        write_grid(file, "/out", grid);
+        GridHdf5Writer writer(file, "/out");
+        writer.write_dataset(grid);
 
+        // The same writer writes the group again, over what it wrote before.
         fill_expected(grid);
-        write_grid(file, "/out", grid);
+        writer.write_dataset(grid);
     }
 
     H5::H5File file(path, H5F_ACC_RDONLY);
     Grid grid(grid_rows, grid_cols);
-    read_grid(file, "/out", grid);
+    read_into<GridHdf5Reader>(file, "/out", grid);
 
     check_grid_holds_the_expected(grid);
 }
@@ -505,12 +538,12 @@ void test_write_replaces_an_array_of_another_shape_and_datatype() {
         fill_expected(grid);
 
         H5::H5File file(path, H5F_ACC_RDWR);
-        write_grid(file, "/out", grid);
+        write_from<GridHdf5Writer>(file, "/out", grid);
     }
 
     H5::H5File file(path, H5F_ACC_RDONLY);
     Grid grid(grid_rows, grid_cols);
-    read_grid(file, "/out", grid);
+    read_into<GridHdf5Reader>(file, "/out", grid);
 
     check_grid_holds_the_expected(grid);
 }
@@ -522,7 +555,7 @@ void test_include_writes_only_the_arrays_it_lists() {
         fill_expected(grid);
 
         H5::H5File file(path, H5F_ACC_TRUNC);
-        write_grid_temperature(file, "/out", grid);
+        write_from<GridTemperatureHdf5Writer>(file, "/out", grid);
     }
 
     H5::H5File file(path, H5F_ACC_RDONLY);
@@ -533,7 +566,7 @@ void test_include_writes_only_the_arrays_it_lists() {
 
     Grid grid(grid_rows, grid_cols);
     fill_untouched(grid);
-    read_grid_temperature(file, "/out", grid);
+    read_into<GridTemperatureHdf5Reader>(file, "/out", grid);
     CHECK(grid.temperature[0, 0] == expected_temperature(0, 0));
     CHECK(grid.kind[0, 0] == untouched_kind);
 }
@@ -558,7 +591,7 @@ void test_writes_a_chunked_dataset() {
         fill_expected(grid);
 
         H5::H5File file(path, H5F_ACC_TRUNC);
-        write_grid_chunked(file, "/out", grid);
+        write_from<GridChunkedHdf5Writer>(file, "/out", grid);
     }
 
     {
@@ -578,7 +611,7 @@ void test_writes_a_chunked_dataset() {
     H5::H5File file(path, H5F_ACC_RDONLY);
     Grid grid(grid_rows, grid_cols);
     fill_untouched(grid);
-    read_grid(file, "/out", grid);
+    read_into<GridHdf5Reader>(file, "/out", grid);
 
     check_grid_holds_the_expected(grid);
 }
@@ -591,7 +624,7 @@ void test_writes_a_deflated_dataset() {
         fill_expected(grid);
 
         H5::H5File file(path, H5F_ACC_TRUNC);
-        write_grid_deflate(file, "/out", grid);
+        write_from<GridDeflateHdf5Writer>(file, "/out", grid);
     }
 
     // The shuffle filter and the compressor, in that order.
@@ -600,7 +633,7 @@ void test_writes_a_deflated_dataset() {
     H5::H5File file(path, H5F_ACC_RDONLY);
     Grid grid(grid_rows, grid_cols);
     fill_untouched(grid);
-    read_grid(file, "/out", grid);
+    read_into<GridHdf5Reader>(file, "/out", grid);
 
     check_grid_holds_the_expected(grid);
 }
@@ -612,7 +645,7 @@ void test_writes_a_dataset_through_a_filter_of_a_plugin() {
         fill_expected(grid);
 
         H5::H5File file(kZstdFile, H5F_ACC_TRUNC);
-        write_grid_zstd(file, "/out", grid);
+        write_from<GridZstdHdf5Writer>(file, "/out", grid);
     }
 
     CHECK(filters_of(kZstdFile, "temperature") == 2);
@@ -631,7 +664,7 @@ void test_writes_a_dataset_through_a_filter_of_a_plugin() {
     H5::H5File file(kZstdFile, H5F_ACC_RDONLY);
     Grid grid(grid_rows, grid_cols);
     fill_untouched(grid);
-    read_grid(file, "/out", grid);
+    read_into<GridHdf5Reader>(file, "/out", grid);
 
     check_grid_holds_the_expected(grid);
 }
@@ -644,7 +677,7 @@ void test_writes_a_dataset_through_a_filter_without_a_level() {
         fill_expected(grid);
 
         H5::H5File file(path, H5F_ACC_TRUNC);
-        write_grid_lz4(file, "/out", grid);
+        write_from<GridLz4Hdf5Writer>(file, "/out", grid);
     }
 
     CHECK(filters_of(path, "temperature") == 1);
@@ -652,7 +685,7 @@ void test_writes_a_dataset_through_a_filter_without_a_level() {
     H5::H5File file(path, H5F_ACC_RDONLY);
     Grid grid(grid_rows, grid_cols);
     fill_untouched(grid);
-    read_grid(file, "/out", grid);
+    read_into<GridHdf5Reader>(file, "/out", grid);
 
     check_grid_holds_the_expected(grid);
 }
@@ -666,14 +699,14 @@ void test_writes_a_compressed_column_major_dataset() {
         fill_expected(field);
 
         H5::H5File file(path, H5F_ACC_TRUNC);
-        write_field_zstd(file, "/out", field);
+        write_from<FieldZstdHdf5Writer>(file, "/out", field);
     }
 
     CHECK(filters_of(path, "value") == 2);
 
     H5::H5File file(path, H5F_ACC_RDONLY);
     Field field(field_x, field_y, field_z);
-    read_field(file, "/out", field);
+    read_into<FieldHdf5Reader>(file, "/out", field);
 
     check_field_holds_the_expected(field);
 }
@@ -688,12 +721,14 @@ void test_reports_a_filter_that_is_not_there() {
 
     H5::H5File out("written_grid_no_plugin.h5", H5F_ACC_TRUNC);
     const std::string write_error =
-        error_of([&] { write_grid_zstd(out, "/out", grid); });
+        error_of([&] { write_from<GridZstdHdf5Writer>(out, "/out", grid); });
     CHECK(contains(write_error, "the 'zstd' filter is not available"));
     CHECK(contains(write_error, "HDF5_PLUGIN_PATH"));
 
     // Deflate is built into hdf5, so it is there whatever the plugin path is.
-    CHECK(error_of([&] { write_grid_deflate(out, "/deflate", grid); }).empty());
+    CHECK(error_of([&] {
+              write_from<GridDeflateHdf5Writer>(out, "/deflate", grid);
+          }).empty());
 
     // The run with the plugins leaves the file behind, and ctest orders it
     // before this one; on its own there is nothing here to read back.
@@ -706,9 +741,180 @@ void test_reports_a_filter_that_is_not_there() {
 
     H5::H5File file(kZstdFile, H5F_ACC_RDONLY);
     const std::string read_error =
-        error_of([&] { read_grid(file, "/out", grid); });
+        error_of([&] { read_into<GridHdf5Reader>(file, "/out", grid); });
     CHECK(contains(read_error, "is stored with a filter that is not available"));
     CHECK(contains(read_error, "HDF5_PLUGIN_PATH"));
+}
+
+// A part of every array is read and written through a hyperslab,
+// which the offset places and the shape of the dataset sizes.
+void test_reads_and_writes_a_part_of_a_dataset() {
+    const std::string path = "partial_grid.h5";
+    {
+        Grid grid(grid_rows, grid_cols);
+        fill_expected(grid);
+
+        H5::H5File file(path, H5F_ACC_TRUNC);
+        write_from<GridHdf5Writer>(file, "/out", grid);
+    }
+
+    // One row of the file fills a dataset of one row.
+    {
+        H5::H5File file(path, H5F_ACC_RDONLY);
+        GridHdf5Reader reader(file, "/out");
+
+        Grid row(1, grid_cols);
+        fill_untouched(row);
+        std::array<std::size_t, 2> offset = {1, 0};
+        reader.read_partial_dataset(row, offset);
+
+        for (std::size_t col = 0; col < grid_cols; ++col) {
+            CHECK(row.temperature[0, col] == expected_temperature(1, col));
+            CHECK(row.kind[0, col] == expected_kind(1, col));
+            CHECK(row.count[0, col] == expected_count(1, col));
+        }
+    }
+
+    // Another row of it is written on its own, over what was there.
+    {
+        H5::H5File file(path, H5F_ACC_RDWR);
+        GridHdf5Writer writer(file, "/out");
+
+        Grid row(1, grid_cols);
+        for (std::size_t col = 0; col < grid_cols; ++col) {
+            row.temperature[0, col] = -1.5;
+            row.kind[0, col] = -2;
+            row.count[0, col] = 3;
+        }
+
+        std::array<std::size_t, 2> offset = {0, 0};
+        writer.write_partial_dataset(row, offset);
+    }
+
+    H5::H5File file(path, H5F_ACC_RDONLY);
+    Grid grid(grid_rows, grid_cols);
+    read_into<GridHdf5Reader>(file, "/out", grid);
+
+    for (std::size_t col = 0; col < grid_cols; ++col) {
+        CHECK(grid.temperature[0, col] == -1.5);
+        CHECK(grid.kind[0, col] == -2);
+        CHECK(grid.count[0, col] == 3);
+
+        // The row that was not written keeps what it held.
+        CHECK(grid.temperature[1, col] == expected_temperature(1, col));
+        CHECK(grid.kind[1, col] == expected_kind(1, col));
+    }
+}
+
+// 'Field' is stored column major, so a part of it is gathered and laid out
+// again around the hyperslab, one part at a time.
+void test_reads_and_writes_a_part_of_a_column_major_dataset() {
+    const std::string path = "partial_field.h5";
+    {
+        Field field(field_x, field_y, field_z);
+        fill_expected(field);
+
+        H5::H5File file(path, H5F_ACC_TRUNC);
+        write_from<FieldHdf5Writer>(file, "/out", field);
+    }
+
+    {
+        H5::H5File file(path, H5F_ACC_RDONLY);
+        FieldHdf5Reader reader(file, "/out");
+
+        Field part(1, field_y, field_z);
+        std::array<std::size_t, 3> offset = {1, 0, 0};
+        reader.read_partial_dataset(part, offset);
+
+        for (std::size_t y = 0; y < field_y; ++y) {
+            for (std::size_t z = 0; z < field_z; ++z) {
+                CHECK(part.value[0, y, z] == expected_value(1, y, z));
+                CHECK(part.tag[0, y, z] == expected_tag(1, y, z));
+            }
+        }
+    }
+
+    {
+        H5::H5File file(path, H5F_ACC_RDWR);
+        FieldHdf5Writer writer(file, "/out");
+
+        Field part(1, field_y, field_z);
+        for (std::size_t y = 0; y < field_y; ++y) {
+            for (std::size_t z = 0; z < field_z; ++z) {
+                part.value[0, y, z] = -expected_value(0, y, z);
+                part.tag[0, y, z] = 0;
+            }
+        }
+
+        std::array<std::size_t, 3> offset = {0, 0, 0};
+        writer.write_partial_dataset(part, offset);
+    }
+
+    H5::H5File file(path, H5F_ACC_RDONLY);
+    Field field(field_x, field_y, field_z);
+    read_into<FieldHdf5Reader>(file, "/out", field);
+
+    for (std::size_t y = 0; y < field_y; ++y) {
+        for (std::size_t z = 0; z < field_z; ++z) {
+            CHECK(field.value[0, y, z] == -expected_value(0, y, z));
+            CHECK(field.tag[0, y, z] == 0);
+
+            // The part that was not written keeps what it held.
+            CHECK(field.value[1, y, z] == expected_value(1, y, z));
+            CHECK(field.tag[1, y, z] == expected_tag(1, y, z));
+        }
+    }
+}
+
+// An offset says where the part begins along every dim, and no more.
+void test_reports_an_offset_of_the_wrong_size() {
+    const std::string path = write_test_file();
+    H5::H5File file(path, H5F_ACC_RDONLY);
+    GridHdf5Reader reader(file, "/sim/grid");
+
+    Grid row(1, grid_cols);
+    std::array<std::size_t, 1> offset = {0};
+    const std::string error =
+        error_of([&] { reader.read_partial_dataset(row, offset); });
+
+    CHECK(contains(error, "offset must hold one index per dim of 'Grid'"));
+}
+
+// A part that reaches past the array is reported rather than cut down.
+void test_reports_a_part_that_does_not_fit() {
+    const std::string path = write_test_file();
+    H5::H5File file(path, H5F_ACC_RDONLY);
+    GridHdf5Reader reader(file, "/sim/grid");
+
+    Grid row(1, grid_cols);
+    std::array<std::size_t, 2> offset = {grid_rows, 0};
+    const std::string error =
+        error_of([&] { reader.read_partial_dataset(row, offset); });
+
+    CHECK(contains(error, "'/sim/grid/temperature' has extent 2, "
+                          "which does not hold 1 elements at offset 2 "
+                          "along dimension 0"));
+}
+
+// A part is written into an array that is already there,
+// which is what write_dataset creates.
+void test_reports_a_part_written_into_a_group_without_the_array() {
+    const std::string path = "partial_missing.h5";
+    {
+        H5::H5File file(path, H5F_ACC_TRUNC);
+        H5::Group group = file.createGroup("/out");
+    }
+
+    H5::H5File file(path, H5F_ACC_RDWR);
+    GridHdf5Writer writer(file, "/out");
+
+    Grid row(1, grid_cols);
+    fill_untouched(row);
+    std::array<std::size_t, 2> offset = {0, 0};
+    const std::string error =
+        error_of([&] { writer.write_partial_dataset(row, offset); });
+
+    CHECK(contains(error, "'/out/temperature' is not in the HDF5 file"));
 }
 
 void test_write_reports_a_file_that_is_open_for_reading() {
@@ -717,7 +923,8 @@ void test_write_reports_a_file_that_is_open_for_reading() {
 
     Grid grid(grid_rows, grid_cols);
     fill_expected(grid);
-    const std::string error = error_of([&] { write_grid(file, "/out", grid); });
+    const std::string error =
+        error_of([&] { write_from<GridHdf5Writer>(file, "/out", grid); });
 
     CHECK(contains(error, "failed to write '/out'"));
 }
@@ -770,6 +977,12 @@ int main(int argc, char** argv) {
     test_writes_a_dataset_through_a_filter_of_a_plugin();
     test_writes_a_dataset_through_a_filter_without_a_level();
     test_writes_a_compressed_column_major_dataset();
+
+    test_reads_and_writes_a_part_of_a_dataset();
+    test_reads_and_writes_a_part_of_a_column_major_dataset();
+    test_reports_an_offset_of_the_wrong_size();
+    test_reports_a_part_that_does_not_fit();
+    test_reports_a_part_written_into_a_group_without_the_array();
 
     if (failures == 0) {
         std::printf("all checks passed\n");

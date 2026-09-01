@@ -868,11 +868,11 @@ def test_parse_hdf5_readers() -> None:
     spec = parse_spec(DATASET_EXAMPLE)
 
     assert [reader.name for reader in spec.hdf5_readers] == [
-        "read_series",
-        "read_raster",
-        "read_raster_mask",
-        "read_raster_layers",
-        "read_volume",
+        "SeriesHdf5Reader",
+        "RasterHdf5Reader",
+        "RasterMaskHdf5Reader",
+        "RasterLayersHdf5Reader",
+        "VolumeHdf5Reader",
     ]
 
     # Without include or exclude every array of the dataset is read.
@@ -1254,14 +1254,14 @@ def test_parse_hdf5_writers() -> None:
     spec = parse_spec(DATASET_EXAMPLE)
 
     assert [writer.name for writer in spec.hdf5_writers] == [
-        "write_series",
-        "write_raster",
-        "write_raster_mask",
-        "write_raster_layers",
-        "write_volume",
-        "write_series_chunked",
-        "write_raster_compressed",
-        "write_volume_compressed",
+        "SeriesHdf5Writer",
+        "RasterHdf5Writer",
+        "RasterMaskHdf5Writer",
+        "RasterLayersHdf5Writer",
+        "VolumeHdf5Writer",
+        "SeriesChunkedHdf5Writer",
+        "RasterCompressedHdf5Writer",
+        "VolumeCompressedHdf5Writer",
     ]
 
     writer = spec.hdf5_writers[0]

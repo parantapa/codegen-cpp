@@ -2,129 +2,250 @@
 {%- set direct = not dataset.column_major or dataset.ndim == 1 -%}
 {%- set chunked = hdf5_writer.chunk -%}
 {%- macro create_array(nd_array) %}
-            {# Replace whatever the group holds under this name already. -#}
-            if (group.nameExists("{{ nd_array.name }}")) {
-                group.unlink("{{ nd_array.name }}");
-            }
+                {# Replace whatever the group holds under this name already. -#}
+                if (group_.nameExists("{{ nd_array.name }}")) {
+                    group_.unlink("{{ nd_array.name }}");
+                }
 {%- if chunked %}
 
-            const H5::DataSet array = group.createDataSet(
-                "{{ nd_array.name }}", {{ nd_array.type | hdf5_native_type }},
-                space, plist);
+                const H5::DataSet array = group_.createDataSet(
+                    "{{ nd_array.name }}", {{ nd_array.type | hdf5_native_type }},
+                    space, plist);
 {%- else %}
 
-            const H5::DataSet array = group.createDataSet(
-                "{{ nd_array.name }}", {{ nd_array.type | hdf5_native_type }}, space);
+                const H5::DataSet array = group_.createDataSet(
+                    "{{ nd_array.name }}", {{ nd_array.type | hdf5_native_type }}, space);
 {%- endif %}
+{%- endmacro %}
+{#- The loops gathering the elements into a row major buffer. -#}
+{%- macro gather_buffer(nd_array) %}
+                std::size_t element = 0;
+{%- for dim in dataset.dims %}
+{{ " " * (16 + loop.index0 * 4) }}for (std::size_t i{{ loop.index0 }} = 0; i{{ loop.index0 }} < data.dims[{{ loop.index0 }}]; ++i{{ loop.index0 }}) {
+{%- endfor %}
+{{ " " * (16 + dataset.ndim * 4) }}buffer[element++] = data.{{ nd_array.name }}[
+{%- for dim in dataset.dims %}i{{ loop.index0 }}{{ ", " if not loop.last }}{% endfor %}];
+{%- for dim in dataset.dims %}
+{{ " " * (16 + (dataset.ndim - loop.index0 - 1) * 4) }}}
+{%- endfor %}
 {%- endmacro %}
 {%- macro write_from(nd_array) %}
 {%- set cpp = nd_array.type | cpp_type %}
 {%- set native = nd_array.type | hdf5_native_type %}
 {%- if direct %}
-            {# The dataset stores its arrays the way HDF5 writes them,
-               so the elements go out as they are. -#}
-            array.write(data._mem_{{ nd_array.name }}.get(),
-                        {{ native }});
+                {# The dataset stores its arrays the way HDF5 writes them,
+                   so the elements go out as they are. -#}
+                array.write(data._mem_{{ nd_array.name }}.get(),
+                            {{ native }});
 {%- else %}
-            {# HDF5 writes the elements in row major order,
-               but the dataset stores them in column major order,
-               so they are gathered one at a time first. -#}
-            std::vector<{{ cpp }}> buffer(data.size());
+                {# HDF5 writes the elements in row major order,
+                   but the dataset stores them in column major order,
+                   so they are gathered one at a time first. -#}
+                std::vector<{{ cpp }}> buffer(data.size());
+{{ gather_buffer(nd_array) }}
 
-            std::size_t element = 0;
-{%- for dim in dataset.dims %}
-{{ " " * (12 + loop.index0 * 4) }}for (std::size_t i{{ loop.index0 }} = 0; i{{ loop.index0 }} < data.dims[{{ loop.index0 }}]; ++i{{ loop.index0 }}) {
-{%- endfor %}
-{{ " " * (12 + dataset.ndim * 4) }}buffer[element++] = data.{{ nd_array.name }}[
-{%- for dim in dataset.dims %}i{{ loop.index0 }}{{ ", " if not loop.last }}{% endfor %}];
-{%- for dim in dataset.dims %}
-{{ " " * (12 + (dataset.ndim - loop.index0 - 1) * 4) }}}
-{%- endfor %}
-
-            array.write(buffer.data(), {{ native }});
+                array.write(buffer.data(), {{ native }});
 {%- endif %}
 {%- endmacro %}
+{%- macro write_part_from(nd_array) %}
+{%- set cpp = nd_array.type | cpp_type %}
+{%- set native = nd_array.type | hdf5_native_type %}
+{%- if direct %}
+                {# The whole of data, which memory describes,
+                   fills the part of the file that the hyperslab selects. -#}
+                array.write(data._mem_{{ nd_array.name }}.get(),
+                            {{ native }}, memory, space);
+{%- else %}
+                {# HDF5 writes the elements in row major order,
+                   but the dataset stores them in column major order,
+                   so they are gathered one at a time first. -#}
+                std::vector<{{ cpp }}> buffer(data.size());
+{{ gather_buffer(nd_array) }}
+
+                array.write(buffer.data(), {{ native }}, memory, space);
+{%- endif %}
+{%- endmacro %}
+{%- macro open_array(nd_array) %}
+                {# The part is written into an array that is already there,
+                   with room for it and stored as the dataset declares. -#}
+                const std::string path = group_path_ + "/{{ nd_array.name }}";
+                if (!group_.nameExists("{{ nd_array.name }}")) [[unlikely]] {
+                    throw std::runtime_error("'" + path +
+                                             "' is not in the HDF5 file");
+                }
+
+                const H5::DataSet array = group_.openDataSet("{{ nd_array.name }}");
+
+                const H5::DataType stored = array.getDataType();
+                if (stored != {{ nd_array.type | hdf5_native_type }}) [[unlikely]] {
+                    throw std::runtime_error(
+                        "'" + path + "' is not stored as '{{ nd_array.type.value }}'");
+                }
+{%- endmacro %}
+{%- macro check_room(nd_array) %}
+                H5::DataSpace space = array.getSpace();
+                if (space.getSimpleExtentNdims() != {{ dataset.ndim }}) [[unlikely]] {
+                    throw std::runtime_error("'" + path +
+                                             "' does not have rank {{ dataset.ndim }}");
+                }
+
+                std::array<hsize_t, {{ dataset.name }}::rank> extents;
+                space.getSimpleExtentDims(extents.data());
+                for (std::size_t i = 0; i < {{ dataset.name }}::rank; ++i) {
+                    if (extents[i] < start[i] + count[i]) [[unlikely]] {
+                        throw std::runtime_error(
+                            "'" + path + "' has extent " +
+                            std::to_string(extents[i]) + ", which does not hold " +
+                            std::to_string(count[i]) + " elements at offset " +
+                            std::to_string(start[i]) + " along dimension " +
+                            std::to_string(i));
+                    }
+                }
+
+                space.selectHyperslab(H5S_SELECT_SET, count.data(), start.data());
+{%- endmacro %}
 {%- macro write_array(nd_array) %}
-        {
+            {
 {{- create_array(nd_array) }}
 {{ write_from(nd_array) }}
-        }
+            }
+{%- endmacro %}
+{%- macro write_part_array(nd_array) %}
+            {
+{{- open_array(nd_array) }}
+{{ check_room(nd_array) }}
+{{ write_part_from(nd_array) }}
+            }
 {%- endmacro %}
 
-// Write the array{{ "s" if arrays | length > 1 }}
+// Writes the array{{ "s" if arrays | length > 1 }}
 {%- for array in arrays %} {{ array.name }}{{ "," if not loop.last }}{% endfor %}
 // of the dataset '{{ dataset.name }}'
-// into the group group_path of the open HDF5 file file, out of data.
-inline void {{ hdf5_writer.name }}(H5::H5File& file, const std::string& group_path,
-{{ " " * (hdf5_writer.name | length + 13) }}const {{ dataset.name }}& data) {
-    try {
-        {# Walk the path one name at a time,
-           so that a group that is missing is created
-           instead of looked for below a group that is missing too. -#}
-        H5::Group group = file.openGroup("/");
-        for (std::size_t begin = 0; begin <= group_path.size();) {
-            const std::size_t end = group_path.find('/', begin);
-            const std::string name = group_path.substr(
-                begin, end == std::string::npos ? end : end - begin);
-            if (!name.empty()) {
-                group = group.nameExists(name) ? group.openGroup(name)
-                                               : group.createGroup(name);
+// into a group of an HDF5 file.
+class {{ hdf5_writer.name }} {
+  public:
+    // Open the group group_path of the open HDF5 file file for writing,
+    // creating it and any group above it that is missing.
+    // The file has to be open for writing;
+    // a read-only file is reported like any other failure.
+    {{ hdf5_writer.name }}(H5::H5File& file, const std::string& group_path)
+        : group_path_(group_path) {
+        try {
+            {# Walk the path one name at a time,
+               so that a group that is missing is created
+               instead of looked for below a group that is missing too. -#}
+            group_ = file.openGroup("/");
+            for (std::size_t begin = 0; begin <= group_path_.size();) {
+                const std::size_t end = group_path_.find('/', begin);
+                const std::string name = group_path_.substr(
+                    begin, end == std::string::npos ? end : end - begin);
+                if (!name.empty()) {
+                    group_ = group_.nameExists(name) ? group_.openGroup(name)
+                                                     : group_.createGroup(name);
+                }
+                if (end == std::string::npos) {
+                    break;
+                }
+                begin = end + 1;
             }
-            if (end == std::string::npos) {
-                break;
-            }
-            begin = end + 1;
+        } catch (const H5::Exception& e) {
+            throw std::runtime_error("failed to write '" + group_path_ + "': " +
+                                     e.getDetailMsg());
         }
+    }
 
-        {# Every array of the dataset has the shape that data was
-           allocated with, so one dataspace describes all of them. -#}
-        std::array<hsize_t, {{ dataset.name }}::rank> extents;
-        for (std::size_t i = 0; i < {{ dataset.name }}::rank; ++i) {
-            extents[i] = static_cast<hsize_t>(data.dims[i]);
-        }
-        const H5::DataSpace space(static_cast<int>({{ dataset.name }}::rank),
-                                  extents.data());
+    // Write every array of data into the group.
+    // An array the group already holds under the same name is replaced,
+    // whatever shape and datatype it was stored with.
+    void write_dataset(const {{ dataset.name }}& data) {
+        try {
+            {# Every array of the dataset has the shape that data was
+               allocated with, so one dataspace describes all of them. -#}
+            std::array<hsize_t, {{ dataset.name }}::rank> extents;
+            for (std::size_t i = 0; i < {{ dataset.name }}::rank; ++i) {
+                extents[i] = static_cast<hsize_t>(data.dims[i]);
+            }
+            const H5::DataSpace space(static_cast<int>({{ dataset.name }}::rank),
+                                      extents.data());
 {%- if chunked %}
 
-        {# Every array is stored in chunks of the declared shape,
-           which is what a filter of the pipeline below applies to. -#}
-        H5::DSetCreatPropList plist;
-        std::array<hsize_t, {{ dataset.name }}::rank> chunk = {
+            {# Every array is stored in chunks of the declared shape,
+               which is what a filter of the pipeline below applies to. -#}
+            H5::DSetCreatPropList plist;
+            std::array<hsize_t, {{ dataset.name }}::rank> chunk = {
 {%- for extent in hdf5_writer.chunk %}{{ extent }}{{ ", " if not loop.last }}{% endfor %}};
-        for (std::size_t i = 0; i < {{ dataset.name }}::rank; ++i) {
-            {# A chunk may not reach past the extent it is stored along,
-               and an extent of zero still takes a chunk of one. -#}
-            if (chunk[i] > extents[i]) {
-                chunk[i] = extents[i];
+            for (std::size_t i = 0; i < {{ dataset.name }}::rank; ++i) {
+                {# A chunk may not reach past the extent it is stored along,
+                   and an extent of zero still takes a chunk of one. -#}
+                if (chunk[i] > extents[i]) {
+                    chunk[i] = extents[i];
+                }
+                if (chunk[i] < 1) {
+                    chunk[i] = 1;
+                }
             }
-            if (chunk[i] < 1) {
-                chunk[i] = 1;
-            }
-        }
-        plist.setChunk(static_cast<int>({{ dataset.name }}::rank), chunk.data());
+            plist.setChunk(static_cast<int>({{ dataset.name }}::rank), chunk.data());
 {%- for line in filters %}
-        {{ line }}
+            {{ line }}
 {%- endfor %}
 {%- if hdf5_writer.compression.value != "none" %}
 
-        {# A filter has to be there before anything is written through it. -#}
-        if (!plist.allFiltersAvail()) [[unlikely]] {
-            throw std::runtime_error(
-                "the '{{ hdf5_writer.compression.value }}' filter is not available; "
+            {# A filter has to be there before anything is written through it. -#}
+            if (!plist.allFiltersAvail()) [[unlikely]] {
+                throw std::runtime_error(
+                    "the '{{ hdf5_writer.compression.value }}' filter is not available; "
 {%- if loaded_filter %}
-                "hdf5 loads a filter from the directories "
-                "in HDF5_PLUGIN_PATH");
+                    "hdf5 loads a filter from the directories "
+                    "in HDF5_PLUGIN_PATH");
 {%- else %}
-                "hdf5 was built without it");
+                    "hdf5 was built without it");
 {%- endif %}
-        }
+            }
 {%- endif %}
 {%- endif %}
-{%- for array in arrays %}
+{%- for array in arrays -%}
 {{ write_array(array) }}
 {%- endfor %}
-    } catch (const H5::Exception& e) {
-        throw std::runtime_error("failed to write '" + group_path + "': " +
-                                 e.getDetailMsg());
+        } catch (const H5::Exception& e) {
+            throw std::runtime_error("failed to write '" + group_path_ + "': " +
+                                     e.getDetailMsg());
+        }
     }
-}
+
+    // Write data into the part of every array that begins at offset,
+    // which is one index per dim of the dataset.
+    // The shape data was allocated with is how much is written,
+    // so the group has to hold every array already,
+    // with room for that much of it beyond offset;
+    // write_dataset is what creates them.
+    void write_partial_dataset(const {{ dataset.name }}& data,
+                               std::span<std::size_t> offset) {
+        if (offset.size() != {{ dataset.name }}::rank) [[unlikely]] {
+            throw std::invalid_argument(
+                "offset must hold one index per dim of '{{ dataset.name }}'");
+        }
+
+        try {
+            {# The hyperslab starts at offset and is as large as data,
+               which is also the whole of the memory it is written from. -#}
+            std::array<hsize_t, {{ dataset.name }}::rank> start;
+            std::array<hsize_t, {{ dataset.name }}::rank> count;
+            for (std::size_t i = 0; i < {{ dataset.name }}::rank; ++i) {
+                start[i] = static_cast<hsize_t>(offset[i]);
+                count[i] = static_cast<hsize_t>(data.dims[i]);
+            }
+            const H5::DataSpace memory(static_cast<int>({{ dataset.name }}::rank),
+                                       count.data());
+{%- for array in arrays -%}
+{{ write_part_array(array) }}
+{%- endfor %}
+        } catch (const H5::Exception& e) {
+            throw std::runtime_error("failed to write '" + group_path_ + "': " +
+                                     e.getDetailMsg());
+        }
+    }
+
+  private:
+    std::string group_path_;
+    H5::Group group_;
+};

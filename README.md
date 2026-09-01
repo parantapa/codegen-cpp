@@ -257,8 +257,8 @@ and so on.
 | `parquet_reader` | a class reading the table from a Parquet file   |
 | `csv_writer`     | a class writing the table to a CSV file         |
 | `parquet_writer` | a class writing the table to a Parquet file     |
-| `hdf5_reader`    | a function reading a dataset from an HDF5 group |
-| `hdf5_writer`    | a function writing a dataset into an HDF5 group |
+| `hdf5_reader`    | a class reading a dataset from an HDF5 group    |
+| `hdf5_writer`    | a class writing a dataset into an HDF5 group    |
 
 Every section has a `name`,
 which is used verbatim as the name of the generated class or function.
@@ -591,24 +591,35 @@ Passing a codec explicitly overrides the guess.
 Parquet files carry their compression inside them,
 so the Parquet reader needs no such argument.
 
-An `hdf5_reader` called `read_tile_data` over the dataset `TileData`
-becomes one free function over `<H5Cpp.h>` and the struct of the dataset:
+An `hdf5_reader` called `TileDataHdf5Reader` over the dataset `TileData`
+becomes one class over `<H5Cpp.h>` and the struct of the dataset:
 
 ```cpp
-inline void read_tile_data(H5::H5File& file, const std::string& group_path,
-                           TileData& data);
+class TileDataHdf5Reader {
+  public:
+    TileDataHdf5Reader(H5::H5File& file, const std::string& group_path);
+
+    void read_dataset(TileData& data);
+    void read_partial_dataset(TileData& data,
+                              std::span<std::size_t> offset);
+};
 ```
 
-`data` is allocated by its caller,
-because the reader fills the arrays in rather than sizing them.
-The function opens the group `group_path` of the open file
-and reads one HDF5 dataset per selected array, named after the array.
-Every one of them has to have exactly the shape
-and the datatype that the dataset declares.
+The constructor opens the group `group_path` of the open file
+and one HDF5 dataset per selected array, named after the array,
+and holds them open for as long as the reader lives,
+so reading the same group again costs no lookups of its own.
+Every array has to be there,
+and to be stored with the datatype that the dataset declares for it.
 The datatype is compared against the `H5::PredType` of the array,
 so the class, the size, the signedness and the byte order
 all have to agree;
 an array stored the other way round is rejected rather than converted.
+
+`data` is allocated by its caller,
+because the reader fills the arrays in rather than sizing them,
+and it is what says what shape the file has to hold them in:
+the rank and every extent are checked against it as the arrays are read.
 Anything that goes wrong is reported as a `std::runtime_error`,
 including a missing group or array,
 a shape or a datatype that does not match,
@@ -616,9 +627,38 @@ and any failure reported by HDF5 itself:
 
 ```cpp
 H5::H5File file("sim.h5", H5F_ACC_RDONLY);
+TileDataHdf5Reader reader(file, "/sim/tile");
+
 TileData tile(1024, 1024);
-read_tile_data(file, "/sim/tile", tile);
+reader.read_dataset(tile);
 ```
+
+The arrays are opened when the reader is constructed
+and their shape is checked when it reads,
+so a missing array or a datatype that does not match
+is reported by the constructor,
+and a shape that does not match by `read_dataset`.
+
+`read_partial_dataset` reads a contiguous part of every array
+through an HDF5 hyperslab.
+`offset` holds one index per dim of the dataset and says where the part
+begins in the file; the shape `data` was allocated with says how large it is,
+so the whole of `data` is filled from the block of that shape at that offset:
+
+```cpp
+TileDataHdf5Reader reader(file, "/sim/tile");
+
+TileData row(1, 1024);
+std::array<std::size_t, 2> offset = {512, 0};
+reader.read_partial_dataset(row, offset);
+```
+
+The file has to hold that much of every array beyond the offset,
+which is checked one dimension at a time,
+and an offset of any other length is a `std::invalid_argument`.
+Note that the whole read asks for the extents to match exactly,
+where the partial read asks only for room:
+the file is free to be larger than the part being read out of it.
 
 HDF5 stores the elements of a dataset in row major order.
 For a dataset that leaves `column_major` unset, and for any dataset
@@ -631,20 +671,50 @@ the rank is known when the header is written,
 so the loops that move them are written out one per dimension.
 
 An `hdf5_writer` is its mirror image.
-One called `write_tile_data` over the same dataset becomes:
+One called `TileDataHdf5Writer` over the same dataset becomes:
 
 ```cpp
-inline void write_tile_data(H5::H5File& file, const std::string& group_path,
-                            const TileData& data);
+class TileDataHdf5Writer {
+  public:
+    TileDataHdf5Writer(H5::H5File& file, const std::string& group_path);
+
+    void write_dataset(const TileData& data);
+    void write_partial_dataset(const TileData& data,
+                               std::span<std::size_t> offset);
+};
 ```
 
-The group is created if it is not there yet,
+The constructor creates the group if it is not there yet,
 together with any group above it that is missing,
 so writing into `/sim/tile` of an empty file works.
-Every array is written with the datatype the dataset declares
+`write_dataset` writes every array with the datatype the dataset declares
 and the shape `data` was allocated with,
 which is exactly what the matching reader expects to find,
 so a writer and a reader over the same dataset round trip.
+One writer may write its group as often as it is asked to,
+with a dataset of a different shape each time.
+
+`write_partial_dataset` is the mirror image of `read_partial_dataset`,
+and writes the whole of `data` into the block of that shape
+that begins at `offset`.
+It writes into the arrays the group already holds rather than creating them,
+because a part says nothing about how large the whole is,
+so `write_dataset` is what lays a group out
+and `write_partial_dataset` is what fills it in piece by piece:
+
+```cpp
+TileDataHdf5Writer writer(file, "/sim/tile");
+writer.write_dataset(whole);                    // 1024 x 1024, once
+
+TileData row(1, 1024);
+std::array<std::size_t, 2> offset = {512, 0};
+writer.write_partial_dataset(row, offset);      // one row of it, as often
+```
+
+Every array has to be there, to have room for the part beyond the offset,
+and to be stored with the datatype the dataset declares,
+so a part is never quietly converted into an array
+that something else laid out differently.
 
 An array the group already holds under the same name is replaced,
 whatever shape and datatype it was stored with;
@@ -677,7 +747,7 @@ HDF5 decompresses an array as it reads it,
 so a reader needs no filter declaration of its own,
 and a file written through a filter reads back through any reader of it.
 
-A reader or a writer contributes nothing but its one function:
+A reader or a writer contributes nothing but its one class:
 the checks and the transfer are written out in place for every array,
 so any number of them can share a header.
 The generated code does not call `H5::Exception::dontPrint()`,

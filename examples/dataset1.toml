@@ -103,39 +103,56 @@ arrays = [
 ]
 
 
-# An hdf5_reader is a free function
+# An hdf5_reader is a class
 # that fills in a dataset from a group of an open HDF5 file:
 #
 #     #include "dataset1.hpp"
 #
 #     H5::H5File file("series.h5", H5F_ACC_RDONLY);
+#     SeriesHdf5Reader reader(file, "/run/series");
+#
 #     Series series(1000);                       // allocated by you
-#     read_series(file, "/run/series", series);
+#     reader.read_dataset(series);
 #
-# The reader fills arrays in rather than sizing them,
-# so `series` is allocated with the shape the group is expected to hold.
-# Inside the group it opens one HDF5 dataset per array,
-# named after the array, here `/run/series/timestamp` and so on.
-#
-# Every one of them has to match exactly:
-# the same rank, the same extent along every dimension,
-# and the same datatype,
+# The constructor opens one HDF5 dataset per array of the dataset,
+# named after the array, here `/run/series/timestamp` and so on,
+# and holds them open for as long as the reader lives,
+# so reading the same group again costs no more lookups.
+# Every array has to be there,
+# and to be stored with the datatype that the dataset declares for it,
 # which is compared against the predefined type of the array,
 # so the class, the size, the signedness and the byte order all have to agree.
+#
+# `read_dataset` fills arrays in rather than sizing them,
+# so `series` is allocated with the shape the group is expected to hold,
+# and the rank and every extent are checked against it as it reads.
 # Anything that goes wrong is reported as a `std::runtime_error`,
 # including a missing group or array,
 # a shape or a datatype that does not match,
 # and any failure reported by HDF5 itself.
 #
-# A reader contributes nothing but this one function to the header,
+# `read_partial_dataset` reads a contiguous part of every array instead,
+# through an HDF5 hyperslab:
+#
+#     Series window(100);                        // 100 of the samples
+#     std::array<std::size_t, 1> offset = {900};
+#     reader.read_partial_dataset(window, offset);
+#
+# `offset` holds one index per dim and says where the part begins in the file,
+# and the shape the dataset was allocated with says how large it is,
+# so the whole of `window` is filled from the block at that offset.
+# The file has to hold that much of every array beyond the offset,
+# which is where the whole read asks for the extents to match exactly.
+#
+# A reader contributes nothing but this one class to the header,
 # so any number of readers and writers may share it.
 [[hdf5_reader]]
-name = "read_series"
+name = "SeriesHdf5Reader"
 dataset = "Series"
 
 # Without `include` or `exclude` every array of the dataset is read.
 [[hdf5_reader]]
-name = "read_raster"
+name = "RasterHdf5Reader"
 dataset = "Raster"
 
 # `include` reads only the arrays it names and leaves the rest alone,
@@ -147,7 +164,7 @@ dataset = "Raster"
 # may only name arrays of the dataset it refers to,
 # and may not name the same array twice.
 [[hdf5_reader]]
-name = "read_raster_mask"
+name = "RasterMaskHdf5Reader"
 dataset = "Raster"
 include = ["mask"]
 
@@ -155,14 +172,14 @@ include = ["mask"]
 # Declaring both lists is an error,
 # and so is a reader left with no array to read at all.
 [[hdf5_reader]]
-name = "read_raster_layers"
+name = "RasterLayersHdf5Reader"
 dataset = "Raster"
 exclude = ["mask"]
 
 # A reader over a column major dataset looks the same from the outside.
 # The relayout described above happens inside it.
 [[hdf5_reader]]
-name = "read_volume"
+name = "VolumeHdf5Reader"
 dataset = "Volume"
 
 
@@ -170,20 +187,34 @@ dataset = "Volume"
 # and takes the dataset by const reference:
 #
 #     H5::H5File file("series.h5", H5F_ACC_TRUNC);
-#     write_series(file, "/run/series", series);
+#     SeriesHdf5Writer writer(file, "/run/series");
+#     writer.write_dataset(series);
 #
-# The group is created if it is not there yet,
+# The constructor creates the group if it is not there yet,
 # together with any group above it that is missing,
 # so writing into `/run/series` of an empty file works.
 # The file has to be open for writing;
 # a read-only file is reported like any other failure.
 #
-# Every array is written with the datatype the dataset declares
+# `write_dataset` writes every array with the datatype the dataset declares
 # and the shape the dataset was allocated with,
 # which is exactly what the matching reader expects to find,
 # so a writer and a reader over the same dataset round trip.
+# One writer may write the group as often as it is asked to,
+# with a dataset of a different shape each time.
+#
+# `write_partial_dataset` is the mirror image of the partial read,
+# and writes the whole of the dataset into the block that begins at `offset`:
+#
+#     writer.write_dataset(whole);               // 1000 samples, once
+#     writer.write_partial_dataset(window, offset);   // 100 of them, as often
+#
+# It writes into the arrays the group already holds rather than creating them,
+# because a part says nothing about how large the whole is,
+# so `write_dataset` is what lays a group out
+# and `write_partial_dataset` is what fills it in piece by piece.
 [[hdf5_writer]]
-name = "write_series"
+name = "SeriesHdf5Writer"
 dataset = "Series"
 
 # Writing into a group that already holds these arrays is not an error.
@@ -192,7 +223,7 @@ dataset = "Series"
 # Note that HDF5 does not hand the space of the replaced array back to the file,
 # so a program that writes the same group over and over grows the file each time.
 [[hdf5_writer]]
-name = "write_raster"
+name = "RasterHdf5Writer"
 dataset = "Raster"
 
 # `include` and `exclude` mean the same thing for a writer as for a reader,
@@ -201,17 +232,17 @@ dataset = "Raster"
 # leaves the other arrays of the group untouched,
 # so a group can be built up, or refreshed, one part at a time.
 [[hdf5_writer]]
-name = "write_raster_mask"
+name = "RasterMaskHdf5Writer"
 dataset = "Raster"
 include = ["mask"]
 
 [[hdf5_writer]]
-name = "write_raster_layers"
+name = "RasterLayersHdf5Writer"
 dataset = "Raster"
 exclude = ["mask"]
 
 [[hdf5_writer]]
-name = "write_volume"
+name = "VolumeHdf5Writer"
 dataset = "Volume"
 
 
@@ -223,7 +254,7 @@ dataset = "Volume"
 # is cut down to the array when the file is written,
 # so one chunk fits a dataset of any size.
 [[hdf5_writer]]
-name = "write_series_chunked"
+name = "SeriesChunkedHdf5Writer"
 dataset = "Series"
 chunk = [65536]
 
@@ -245,7 +276,7 @@ chunk = [65536]
 # Every one of the three asks for `chunk` as well,
 # because a filter only applies to an array stored in chunks.
 [[hdf5_writer]]
-name = "write_raster_compressed"
+name = "RasterCompressedHdf5Writer"
 dataset = "Raster"
 chunk = [512, 512]
 compression = "deflate"
@@ -258,7 +289,7 @@ shuffle = true
 # and a reader looks for the filters of an array before it reads one,
 # so a plugin that is not there is reported rather than stumbled over.
 [[hdf5_writer]]
-name = "write_volume_compressed"
+name = "VolumeCompressedHdf5Writer"
 dataset = "Volume"
 chunk = [64, 64, 64]
 compression = "zstd"

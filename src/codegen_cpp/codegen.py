@@ -638,7 +638,7 @@ def hdf5_filters(hdf5_writer: Hdf5Writer) -> list[str]:
 
 def hdf5_includes(dataset: Dataset) -> Includes:
     """Return the headers that an HDF5 reader or writer of DATASET needs."""
-    std = {"array", "cstddef", "stdexcept", "string"}
+    std = {"array", "cstddef", "span", "stdexcept", "string"}
 
     # A column major dataset of rank two or more is transposed as it is
     # read or written, which needs a buffer and the index arithmetic over it.

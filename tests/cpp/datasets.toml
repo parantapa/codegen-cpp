@@ -19,46 +19,46 @@ arrays = [
 column_major = true
 
 [[hdf5_reader]]
-name = "read_grid"
+name = "GridHdf5Reader"
 dataset = "Grid"
 
 [[hdf5_reader]]
-name = "read_grid_temperature"
+name = "GridTemperatureHdf5Reader"
 dataset = "Grid"
 include = ["temperature"]
 
 [[hdf5_reader]]
-name = "read_grid_labels"
+name = "GridLabelsHdf5Reader"
 dataset = "Grid"
 exclude = ["temperature"]
 
 [[hdf5_reader]]
-name = "read_field"
+name = "FieldHdf5Reader"
 dataset = "Field"
 
 [[hdf5_writer]]
-name = "write_grid"
+name = "GridHdf5Writer"
 dataset = "Grid"
 
 [[hdf5_writer]]
-name = "write_grid_temperature"
+name = "GridTemperatureHdf5Writer"
 dataset = "Grid"
 include = ["temperature"]
 
 [[hdf5_writer]]
-name = "write_field"
+name = "FieldHdf5Writer"
 dataset = "Field"
 
 # The same arrays stored in chunks, and through the filters over them.
 # A chunk on its own asks for no filter at all.
 [[hdf5_writer]]
-name = "write_grid_chunked"
+name = "GridChunkedHdf5Writer"
 dataset = "Grid"
 chunk = [1, 2]
 
 # 'deflate' is built into hdf5 and needs no plugin.
 [[hdf5_writer]]
-name = "write_grid_deflate"
+name = "GridDeflateHdf5Writer"
 dataset = "Grid"
 chunk = [1, 2]
 compression = "deflate"
@@ -68,7 +68,7 @@ shuffle = true
 # 'zstd' is a filter that hdf5 loads at run time,
 # and this chunk reaches past the array, so it is cut down to it.
 [[hdf5_writer]]
-name = "write_grid_zstd"
+name = "GridZstdHdf5Writer"
 dataset = "Grid"
 chunk = [64, 64]
 compression = "zstd"
@@ -77,14 +77,14 @@ shuffle = true
 
 # 'lz4' takes no level of its own.
 [[hdf5_writer]]
-name = "write_grid_lz4"
+name = "GridLz4Hdf5Writer"
 dataset = "Grid"
 chunk = [2, 2]
 compression = "lz4"
 
 # A column major dataset is gathered before it is compressed.
 [[hdf5_writer]]
-name = "write_field_zstd"
+name = "FieldZstdHdf5Writer"
 dataset = "Field"
 chunk = [1, 3, 4]
 compression = "zstd"
