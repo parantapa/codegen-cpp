@@ -176,6 +176,46 @@ void test_names_in_file(const std::string& path) {
     CHECK(read.spots.at(1).empty());
 }
 
+// A writer writes the names that the file is to carry,
+// so a reader of the file finds them under those names
+// and the writer's own reader reads them back.
+void test_writes_names_in_file(const std::string& path) {
+    U written;
+    written.push_back(U::row_type{
+        .ident = 1,
+        .spots = {Spot{.across = 1, .down = 1.5}, Spot{.across = 2, .down = 2.5}},
+    });
+    written.push_back(U::row_type{.ident = 2, .spots = {}});
+
+    {
+        UParquetWriter writer(path);
+        writer.write_batch(written);
+        writer.close();
+    }
+
+    // The file calls the column 'points' and its fields 'x' and 'y'.
+    V read;
+    {
+        VParquetReader reader(path, 100);
+        reader.read_all(read);
+    }
+
+    CHECK(read.size() == 2);
+    CHECK(read.id == std::vector<std::int64_t>({1, 2}));
+    CHECK(read.points.at(0).size() == 2);
+    CHECK(read.points.at(0).at(1) == Point({.x = 2, .y = 2.5}));
+    CHECK(read.points.at(1).empty());
+
+    U again;
+    {
+        UParquetReader reader(path, 100);
+        reader.read_all(again);
+    }
+
+    CHECK(again.ident == written.ident);
+    CHECK(again.spots == written.spots);
+}
+
 // A null is read as the default of the part holding it,
 // and a null aggregate as the empty value of its own type.
 void test_defaults(const std::string& path) {
@@ -225,6 +265,7 @@ int main() {
 
     test_round_trip(path);
     test_names_in_file(path);
+    test_writes_names_in_file("test_nested_renamed.parquet");
     test_batches(path);
     test_defaults(nulls);
     test_missing_column(nulls);

@@ -12,7 +12,7 @@ columns = [
 [[csv_reader]]
 name = "PointCsvReader"
 table = "Point"
-default_values = { label = "missing", score = -1.5 }
+default = { label = "missing", score = -1.5 }
 
 # Reads the same table out of a file that names two of its columns
 # the way no C++ member could be named.
@@ -25,12 +25,32 @@ default = { label = "missing", score = -1.5 }
 [[parquet_reader]]
 name = "PointParquetReader"
 table = "Point"
-default_values = { label = "missing", score = -1.5 }
+default = { label = "missing", score = -1.5 }
+
+# Reads the same table out of a Parquet file that names two of its columns
+# the way no C++ member could be named.
+[[parquet_reader]]
+name = "PointRenamingParquetReader"
+table = "Point"
+name_in_file = { id = "Point ID", score = "Score (mean)" }
+default = { label = "missing", score = -1.5 }
 
 [[csv_writer]]
 name = "PointCsvWriter"
 table = "Point"
 
+# Writes the names that the renaming readers look for,
+# rather than the names that the table uses.
+[[csv_writer]]
+name = "PointRenamingCsvWriter"
+table = "Point"
+name_in_file = { id = "Point ID", score = "Score (mean)" }
+
 [[parquet_writer]]
 name = "PointParquetWriter"
 table = "Point"
+
+[[parquet_writer]]
+name = "PointRenamingParquetWriter"
+table = "Point"
+name_in_file = { id = "Point ID", score = "Score (mean)" }

@@ -40,7 +40,7 @@ columns = [
 [[csv_reader]]
 name = "MeasurementCsvReader"
 table = "Measurement"
-default_values = { note = "" }
+default = { note = "" }
 
 [[parquet_writer]]
 name = "MeasurementParquetWriter"
@@ -96,6 +96,148 @@ To see how a specification is parsed, without generating anything:
 ```bash
 codegen-cpp debug parse-spec examples/table1.toml
 ```
+
+## Starting from a data file
+
+Writing the table of a wide file by hand is tedious,
+so `make-config` writes a first draft of one from the file itself,
+`make-config csv` from a CSV file and `make-config parquet` from a Parquet one:
+
+```bash
+codegen-cpp make-config csv measurements.csv.gz
+```
+
+This reads the columns of the file with pyarrow,
+and writes `measurements.toml` beside it,
+holding the table the file is read into,
+a reader that reads it and a writer that writes it back out.
+`--output-file` is spelled `--output` (`-o`) here,
+and the default drops the suffixes of both the format and the codec,
+so `measurements.csv.gz` and `measurements.csv`
+are both described by `measurements.toml`.
+An output file that is already there is overwritten.
+
+The types are the ones pyarrow infers.
+By default it infers them from the first block of the file,
+which is a megabyte of it,
+so a column that is integral for its first megabyte
+and turns into text further down is declared `i64`
+and read as one until the file throws.
+`--read-all` infers them from every row instead,
+which types such a column by all of it,
+at the cost of reading the whole file into memory.
+The specification says which of the two it was generated with.
+
+Note that the default reads more of the file than it infers from.
+The streaming reader reads ahead,
+by about ten megabytes at the default block size,
+so a file smaller than that is read from end to end,
+and a file of any size above it is not.
+Neither one holds more than a block at a time,
+which is what `--read-all` gives up.
+
+A column that a CSV holds but a table does not, a date among them,
+is declared as `str` and noted in a comment,
+because Arrow converts it to a string on the way in.
+
+The columns of a data file are rarely C++ identifiers,
+so each one is turned into one:
+whatever may not appear in an identifier becomes an underscore,
+a run of underscores becomes one,
+a name that would begin with a digit is prefixed with one,
+and a name that C++ keeps for itself is followed by one.
+Two names that come out the same are numbered apart.
+The reader maps each of them back with `name_in_file`,
+so `Station ID` in the file is `Station_ID` in the table:
+
+```toml
+[[table]]
+name = "Measurements"
+columns = [
+    { name = "Station_ID", type = "i64" },
+    { name = "temp_C", type = "f64" },
+    { name = "when", type = "str" },  # read as 'date32[day]'
+]
+
+[[csv_reader]]
+name = "MeasurementsCsvReader"
+table = "Measurements"
+
+[csv_reader.name_in_file]
+Station_ID = "Station ID"
+temp_C = "temp (C)"
+
+[csv_reader.default]
+Station_ID = 0
+temp_C = 0.0
+when = ""
+
+[[csv_writer]]
+name = "MeasurementsCsvWriter"
+table = "Measurements"
+
+[csv_writer.name_in_file]
+Station_ID = "Station ID"
+temp_C = "temp (C)"
+```
+
+Every column is given a default,
+so a draft reads a file with holes in it rather than throwing;
+drop a column from `default` to make a null in it an error.
+The writer is given the same `name_in_file` as the reader,
+so a table read out of one file is written back into its like;
+drop that section to write the names of the table instead.
+
+A file that names two of its columns the same is reported rather than
+described, because a reader selects its columns by name
+and cannot tell those two apart.
+
+### From a Parquet file
+
+`make-config parquet` writes the same three sections,
+named `MeasurementsParquetReader` and `MeasurementsParquetWriter`,
+and everything above about names and defaults holds here too.
+Two things differ.
+
+Nothing is inferred and nothing but the footer is read,
+because a Parquet file carries its schema inside it,
+so there is no `--read-all` and no sampling to go wrong.
+
+A group of the file becomes an aggregate type of its own,
+named after the flattened key that reaches it,
+so a `LIST` becomes a `vector`, a `MAP` a `map`,
+and a plain group a `struct`,
+each declared above the types that hold it:
+
+```toml
+[[struct]]
+name = "TopicsElement"
+fields = [
+    { name = "name", type = "str" },
+    { name = "score", type = "f64" },
+]
+
+[[vector]]
+name = "Topics"
+element = "TopicsElement"
+```
+
+The reader then names and defaults every part by its flattened key,
+so `biblio.first_page` is renamed and `topics.element.score` is defaulted,
+and a key that ends at an aggregate type takes no default.
+
+A column stored as something no table can hold, a timestamp among them,
+is left out rather than declared as something it is not,
+because a Parquet reader matches the type of what it reads exactly
+and would throw on the first batch.
+A column of a group is left out whole
+where anything below it cannot be held.
+Each one is named in a comment at the top of the specification
+and reported on the command line,
+and a file that holds nothing a table can hold is an error.
+Leaving a column out costs nothing else:
+a Parquet reader selects the columns it wants by name,
+so the ones that are left read as they always would.
 
 ## The specification
 
@@ -179,26 +321,36 @@ it defaults to `false`, which stores them row major,
 so that the last dim varies fastest.
 See `examples/dataset1.toml`.
 
-Table readers may declare `default_values`,
-a mapping of column names to the value stored
-when that column is null in the input file.
-A null in any other column is an error.
-The value has to fit the type of its column.
-
-A table reader takes `default` and `name_in_file` as well,
-which say the same thing about one part of the table at a time,
-keyed by the flattened key of that part.
+A table reader says what it has to say about a file
+one part of the table at a time,
+through `default` and `name_in_file`,
+each keyed by the flattened key of the part it names.
 `default` is the value stored where the file holds a null,
-and `name_in_file` is the name the file gives the part,
+and a null that no default answers for is an error;
+the value has to fit the type of the part it names.
+`name_in_file` is the name the file gives the part,
 where that is not the name the specification uses,
 so a column awkwardly named in the file
 is not awkwardly named in every line of C++ that touches it.
-Declaring both a `default_value` and a `default` for one part is an error,
-and so is renaming two parts of one group to one name.
+Renaming two parts of one group to one name is an error.
 
-For a `csv_reader` a flattened key is the name of a column and nothing else,
+A `csv_writer` and a `parquet_writer` take `name_in_file` as well,
+keyed the same way and read the other way around:
+it is the name the writer gives the part in the file it writes,
+so a table read under the names of the specification
+is written back out under the names the file uses.
+A writer takes no `default`,
+because a table holds a value for every part of every row it holds.
+
+Earlier versions spelled `default` as `default_values`,
+which is no longer read;
+a specification that still declares it is rejected rather than ignored.
+
+For a `csv_reader` or a `csv_writer`
+a flattened key is the name of a column and nothing else,
 because a CSV holds no level below one.
-A `parquet_reader` reaches into a nested column with the same two keys:
+A `parquet_reader` or a `parquet_writer`
+reaches into a nested column with the same keys:
 the name of the column,
 followed by one step for every level below it,
 which is the name of a field of a struct,

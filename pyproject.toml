@@ -16,6 +16,7 @@ dependencies = [
     "pydantic>=2",
     "toml",
     "jinja2",
+    "pyarrow",
 ]
 
 [project.optional-dependencies]

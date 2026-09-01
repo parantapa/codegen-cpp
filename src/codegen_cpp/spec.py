@@ -415,26 +415,46 @@ class TableClass(BaseModel):
     name: str
     table: str
 
+    # Keyed by the flattened keys of the table that is read or written.
+    # A CSV file holds one column and no level below it,
+    # so a CSV reader or writer keys them by the names of the columns;
+    # a Parquet reader or writer reaches a field of a struct at any depth,
+    # the element of a vector and the value of a map alike.
+    #
+    # `name_in_file` is the name the file gives the part,
+    # which a reader looks for and a writer writes,
+    # where that is not the name the specification uses.
+    name_in_file: dict[str, str] = {}
+
 
 class Reader(TableClass):
     """The fields shared by every reader that fills in a table."""
 
     KIND: ClassVar[str] = "reader"
 
-    default_values: dict[str, DefaultValue] = {}
-
-    # Both are keyed by the flattened keys of the table that is read.
-    # A CSV file holds one column and no level below it,
-    # so a CSV reader keys them by the names of the columns;
-    # a Parquet reader reaches a field of a struct at any depth,
-    # the element of a vector and the value of a map alike.
-    #
+    # Keyed by the flattened keys of the table that is read,
+    # the way `name_in_file` is.
     # `default` is what the reader stores where the file holds a null,
     # and a null that no default answers for is an error.
-    # `name_in_file` is the name the reader looks for,
-    # where that is not the name the specification uses.
     default: dict[str, DefaultValue] = {}
-    name_in_file: dict[str, str] = {}
+
+    @model_validator(mode="before")
+    @classmethod
+    def check_default_values(cls, data: Any) -> Any:
+        """
+        Reject default_values, which default replaced.
+
+        The two said the same thing, and a specification that still says it
+        the old way is told so rather than read as one that says nothing.
+        """
+        if isinstance(data, dict) and "default_values" in data:
+            name = data.get("name")
+            where = f" '{name}'" if isinstance(name, str) and name else ""
+            raise ValueError(
+                f"{cls.KIND}{where} declares default_values, "
+                "which is no longer read; declare default instead"
+            )
+        return data
 
 
 class CsvReader(Reader):
@@ -445,31 +465,38 @@ class ParquetReader(Reader):
     KIND: ClassVar[str] = "parquet_reader"
 
 
-def reader_keys(
-    reader: Reader, table: Table, aggregates: dict[str, Aggregate]
+class Writer(TableClass):
+    """The fields shared by every writer that writes out a table."""
+
+    KIND: ClassVar[str] = "writer"
+
+
+class CsvWriter(Writer):
+    KIND: ClassVar[str] = "csv_writer"
+
+
+class ParquetWriter(Writer):
+    KIND: ClassVar[str] = "parquet_writer"
+
+
+def table_class_keys(
+    generated: TableClass, table: Table, aggregates: dict[str, Aggregate]
 ) -> dict[str, FlatKey]:
     """
-    Return the keys of TABLE that READER may name, and what each of them names.
+    Return the keys of TABLE that GENERATED may name,
+    and what each of them names.
 
     A CSV file holds nothing but the columns of a table,
-    so a CSV reader names those and nothing below them,
-    and a Parquet reader names every key of the flattened table.
+    so a CSV reader or writer names those and nothing below them,
+    and a Parquet reader or writer names every key of the flattened table.
     """
-    if isinstance(reader, CsvReader):
+    if isinstance(generated, (CsvReader, CsvWriter)):
         return {
             column.name: FlatKey(type=column.type, is_named=True)
             for column in table.columns
         }
 
     return flatten_table(table, aggregates)
-
-
-class CsvWriter(TableClass):
-    KIND: ClassVar[str] = "csv_writer"
-
-
-class ParquetWriter(TableClass):
-    KIND: ClassVar[str] = "parquet_writer"
 
 
 class DatasetClass(BaseModel):
@@ -568,9 +595,14 @@ class Spec(BaseModel):
         return [*self.csv_readers, *self.parquet_readers]
 
     @property
+    def writers(self) -> list[Writer]:
+        """Return every writer of the specification."""
+        return [*self.csv_writers, *self.parquet_writers]
+
+    @property
     def table_classes(self) -> list[TableClass]:
         """Return every class generated for a table of the specification."""
-        return [*self.readers, *self.csv_writers, *self.parquet_writers]
+        return [*self.readers, *self.writers]
 
     @property
     def hdf5_classes(self) -> list[Hdf5Class]:
@@ -654,39 +686,6 @@ class Spec(BaseModel):
                     f"{', '.join(aggregate_columns)}"
                 )
 
-        for reader in self.readers:
-            table = tables.get(reader.table)
-            if table is None:
-                continue
-
-            columns = {column.name: column for column in table.columns}
-            unknown = [name for name in reader.default_values if name not in columns]
-            if unknown:
-                errors.append(
-                    f"{reader.KIND} '{reader.name}' lists default_values "
-                    f"not in table '{table.name}': {', '.join(unknown)}"
-                )
-
-            for name, value in reader.default_values.items():
-                column = columns.get(name)
-                if column is None:
-                    continue
-
-                if not isinstance(column.type, ScalarType):
-                    errors.append(
-                        f"{reader.KIND} '{reader.name}' has a default_value "
-                        f"for column '{name}', which is of aggregate type "
-                        f"'{column.type}'"
-                    )
-                    continue
-
-                reason = check_default_value(column.type, value)
-                if reason is not None:
-                    errors.append(
-                        f"{reader.KIND} '{reader.name}' has a default_value "
-                        f"for column '{name}' that {reason}"
-                    )
-
         # A cycle would make the flattened form of a table infinite,
         # and is reported above, so the keys are only walked without one.
         for reader in self.readers if not cycles else []:
@@ -694,7 +693,7 @@ class Spec(BaseModel):
             if table is None:
                 continue
 
-            keys = reader_keys(reader, table, aggregates)
+            keys = table_class_keys(reader, table, aggregates)
 
             for key, value in reader.default.items():
                 flat = keys.get(key)
@@ -716,24 +715,30 @@ class Spec(BaseModel):
                         f"{reader.KIND} '{reader.name}' has a default for "
                         f"'{key}' that {reason}"
                     )
-                if key in reader.default_values:
-                    errors.append(
-                        f"{reader.KIND} '{reader.name}' declares both a "
-                        f"default_value and a default for '{key}'"
-                    )
 
-            for key in reader.name_in_file:
+        # A reader and a writer name a part of a file the same way,
+        # the one to look for it and the other to write it.
+        for generated in self.table_classes if not cycles else []:
+            table = tables.get(generated.table)
+            if table is None:
+                continue
+
+            keys = table_class_keys(generated, table, aggregates)
+            verb = "reads" if isinstance(generated, Reader) else "writes"
+
+            for key in generated.name_in_file:
                 flat = keys.get(key)
                 if flat is None:
                     errors.append(
-                        f"{reader.KIND} '{reader.name}' has a name_in_file for "
-                        f"'{key}', which table '{table.name}' does not hold"
+                        f"{generated.KIND} '{generated.name}' has a "
+                        f"name_in_file for '{key}', which table "
+                        f"'{table.name}' does not hold"
                     )
                 elif not flat.is_named:
                     errors.append(
-                        f"{reader.KIND} '{reader.name}' has a name_in_file for "
-                        f"'{key}', which a Parquet file matches by position "
-                        f"rather than by name"
+                        f"{generated.KIND} '{generated.name}' has a "
+                        f"name_in_file for '{key}', which a Parquet file "
+                        f"matches by position rather than by name"
                     )
 
             # Renaming may not make two parts of one group share a name.
@@ -742,15 +747,17 @@ class Spec(BaseModel):
                 if not flat.is_named:
                     continue
                 parent, _, last = key.rpartition(".")
-                groups.setdefault(parent, []).append(reader.name_in_file.get(key, last))
+                groups.setdefault(parent, []).append(
+                    generated.name_in_file.get(key, last)
+                )
 
             for parent, names in groups.items():
                 duplicates = find_duplicates(names)
                 if duplicates:
                     where = f"'{parent}'" if parent else f"table '{table.name}'"
                     errors.append(
-                        f"{reader.KIND} '{reader.name}' reads two parts of "
-                        f"{where} by one name: {', '.join(duplicates)}"
+                        f"{generated.KIND} '{generated.name}' {verb} two parts "
+                        f"of {where} by one name: {', '.join(duplicates)}"
                     )
 
         datasets = {dataset.name: dataset for dataset in self.datasets}

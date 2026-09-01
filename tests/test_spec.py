@@ -62,7 +62,7 @@ def test_parse_csv_readers() -> None:
     reader = spec.csv_readers[0]
     assert reader.name == "MeasurementCsvReader"
     assert reader.table == "Measurement"
-    assert reader.default_values == {
+    assert reader.default == {
         "quality": -1,
         "humidity": 0.0,
         "is_valid": False,
@@ -70,10 +70,9 @@ def test_parse_csv_readers() -> None:
     }
 
     # A reader may leave every column required.
-    assert spec.csv_readers[1].default_values == {}
+    assert spec.csv_readers[1].default == {}
 
-    # A reader may say the same thing one column at a time,
-    # and say what the file calls a column.
+    # A reader may also say what the file calls a column.
     reader = spec.csv_readers[2]
     assert reader.default == {"latitude": 0.0, "longitude": 0.0}
     assert reader.name_in_file == {
@@ -161,22 +160,8 @@ def test_unknown_table_reference_rejected(tmp_path: Path) -> None:
         parse_spec(spec_file)
 
 
-def test_unknown_default_value_column_rejected(tmp_path: Path) -> None:
-    """Default values must be given for columns of the referenced table."""
-    spec_file = write_spec(
-        tmp_path,
-        GOOD_TABLE + "[[csv_reader]]\n"
-        'name = "R"\n'
-        'table = "t"\n'
-        "default_values = { a = 1, zzz = 2 }\n",
-    )
-
-    with pytest.raises(ValidationError, match="not in table 't': zzz"):
-        parse_spec(spec_file)
-
-
 @pytest.mark.parametrize(
-    ("default_value", "reason"),
+    ("default", "reason"),
     [
         ('{ a = "x" }', "expects an integer"),
         ("{ a = true }", "expects an integer"),
@@ -185,35 +170,53 @@ def test_unknown_default_value_column_rejected(tmp_path: Path) -> None:
         ("{ b = 1 }", "expects a string"),
     ],
 )
-def test_default_value_of_the_wrong_type_rejected(
-    tmp_path: Path, default_value: str, reason: str
+def test_default_of_the_wrong_type_rejected(
+    tmp_path: Path, default: str, reason: str
 ) -> None:
-    """A default value must fit the type of its column."""
+    """A default must fit the type of its column."""
     spec_file = write_spec(
         tmp_path,
         GOOD_TABLE + "[[csv_reader]]\n"
         'name = "R"\n'
         'table = "t"\n'
-        f"default_values = {default_value}\n",
+        f"default = {default}\n",
     )
 
     with pytest.raises(ValidationError, match=reason):
         parse_spec(spec_file)
 
 
-def test_default_values_accepted(tmp_path: Path) -> None:
-    """A default value of the right type is kept as it is."""
+def test_defaults_accepted(tmp_path: Path) -> None:
+    """A default of the right type is kept as it is."""
     spec_file = write_spec(
         tmp_path,
         GOOD_TABLE + "[[csv_reader]]\n"
         'name = "R"\n'
         'table = "t"\n'
-        'default_values = { a = -3, b = "n/a" }\n',
+        'default = { a = -3, b = "n/a" }\n',
     )
 
     spec = parse_spec(spec_file)
 
-    assert spec.csv_readers[0].default_values == {"a": -3, "b": "n/a"}
+    assert spec.csv_readers[0].default == {"a": -3, "b": "n/a"}
+
+
+@pytest.mark.parametrize("section", ["csv_reader", "parquet_reader"])
+def test_default_values_rejected(tmp_path: Path, section: str) -> None:
+    """default_values is no longer read, and a spec that uses it is told so."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_TABLE + f"[[{section}]]\n"
+        'name = "R"\n'
+        'table = "t"\n'
+        "default_values = { a = 1 }\n",
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=f"{section} 'R' declares default_values, which is no longer read",
+    ):
+        parse_spec(spec_file)
 
 
 def test_csv_reader_default_and_name_in_file_accepted(tmp_path: Path) -> None:
@@ -284,26 +287,6 @@ def test_csv_reader_default_of_the_wrong_type_rejected(tmp_path: Path) -> None:
         parse_spec(spec_file)
 
 
-def test_csv_reader_with_a_default_value_and_a_default_rejected(
-    tmp_path: Path,
-) -> None:
-    """One column takes its default from one of the two, not from both."""
-    spec_file = write_spec(
-        tmp_path,
-        GOOD_TABLE + "[[csv_reader]]\n"
-        'name = "R"\n'
-        'table = "t"\n'
-        "default_values = { a = 1 }\n"
-        "default = { a = 2 }\n",
-    )
-
-    with pytest.raises(
-        ValidationError,
-        match="csv_reader 'R' declares both a default_value and a default for 'a'",
-    ):
-        parse_spec(spec_file)
-
-
 def test_csv_reader_name_in_file_for_an_unknown_column_rejected(
     tmp_path: Path,
 ) -> None:
@@ -343,6 +326,130 @@ def test_csv_reader_that_reads_two_columns_by_one_name_rejected(
         parse_spec(spec_file)
 
 
+NESTED_TABLE = """
+[[struct]]
+name = "S"
+fields = [{ name = "x", type = "i32" }]
+
+[[vector]]
+name = "V"
+element = "i32"
+
+[[table]]
+name = "t"
+columns = [
+    { name = "a", type = "i32" },
+    { name = "s", type = "S" },
+    { name = "v", type = "V" },
+]
+"""
+
+
+@pytest.mark.parametrize("section", ["csv_writer", "parquet_writer"])
+def test_writer_name_in_file_accepted(tmp_path: Path, section: str) -> None:
+    """A writer says what the file is to call a column, the way a reader does."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_TABLE + f"[[{section}]]\n"
+        'name = "W"\n'
+        'table = "t"\n'
+        'name_in_file = { a = "Column A" }\n',
+    )
+
+    writer = parse_spec(spec_file).writers[0]
+
+    assert writer.name_in_file == {"a": "Column A"}
+
+
+@pytest.mark.parametrize("section", ["csv_writer", "parquet_writer"])
+def test_writer_name_in_file_defaults_to_empty(tmp_path: Path, section: str) -> None:
+    """A writer that says nothing writes every column under its own name."""
+    spec_file = write_spec(
+        tmp_path, GOOD_TABLE + f'[[{section}]]\nname = "W"\ntable = "t"\n'
+    )
+
+    assert parse_spec(spec_file).writers[0].name_in_file == {}
+
+
+@pytest.mark.parametrize("section", ["csv_writer", "parquet_writer"])
+@pytest.mark.parametrize("key", ["zzz", "a.element"])
+def test_writer_name_in_file_for_an_unknown_column_rejected(
+    tmp_path: Path, section: str, key: str
+) -> None:
+    """A writer may only rename a part that the table declares."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_TABLE + f"[[{section}]]\n"
+        'name = "W"\n'
+        'table = "t"\n'
+        f'name_in_file = {{ "{key}" = "x" }}\n',
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=f"{section} 'W' has a name_in_file for '{key}', "
+        "which table 't' does not hold",
+    ):
+        parse_spec(spec_file)
+
+
+def test_parquet_writer_name_in_file_names_a_field_of_a_struct(
+    tmp_path: Path,
+) -> None:
+    """A Parquet writer reaches a field of a struct, the way a reader does."""
+    spec_file = write_spec(
+        tmp_path,
+        NESTED_TABLE + "[[parquet_writer]]\n"
+        'name = "W"\n'
+        'table = "t"\n'
+        'name_in_file = { "s.x" = "across" }\n',
+    )
+
+    writer = parse_spec(spec_file).parquet_writers[0]
+
+    assert writer.name_in_file == {"s.x": "across"}
+
+
+def test_parquet_writer_name_in_file_for_a_part_matched_by_position_rejected(
+    tmp_path: Path,
+) -> None:
+    """The element of a vector is written where it stands, under no name."""
+    spec_file = write_spec(
+        tmp_path,
+        NESTED_TABLE + "[[parquet_writer]]\n"
+        'name = "W"\n'
+        'table = "t"\n'
+        'name_in_file = { "v.element" = "x" }\n',
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="parquet_writer 'W' has a name_in_file for 'v.element', "
+        "which a Parquet file matches by position rather than by name",
+    ):
+        parse_spec(spec_file)
+
+
+@pytest.mark.parametrize("section", ["csv_writer", "parquet_writer"])
+def test_writer_that_writes_two_columns_by_one_name_rejected(
+    tmp_path: Path, section: str
+) -> None:
+    """Renaming may not make two columns of a table share a name."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_TABLE + f"[[{section}]]\n"
+        'name = "W"\n'
+        'table = "t"\n'
+        'name_in_file = { a = "b" }\n',
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=f"{section} 'W' writes two parts of table 't' by one name: b",
+    ):
+        parse_spec(spec_file)
+
+
 def test_table_without_columns_rejected(tmp_path: Path) -> None:
     """A table must declare at least one column."""
     spec_file = write_spec(tmp_path, '[[table]]\nname = "t"\ncolumns = []\n')
@@ -365,7 +472,14 @@ def test_annotated_example_parses() -> None:
     assert [w.name for w in spec.csv_writers] == [
         "MeasurementCsvWriter",
         "StationCsvWriter",
+        "StationExportCsvWriter",
     ]
+
+    # A writer says what the file is to call a column, the way a reader does.
+    assert spec.csv_writers[2].name_in_file == {
+        "station_id": "Station ID",
+        "name": "Station Name",
+    }
     assert [w.name for w in spec.parquet_writers] == ["MeasurementParquetWriter"]
 
 

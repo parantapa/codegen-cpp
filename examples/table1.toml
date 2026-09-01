@@ -82,25 +82,22 @@ table = "Measurement"
 # mapped to the value stored in place of a null.
 # Reading a null in any other column is an error.
 #
-# A default value has to fit the type of its column:
+# A default has to fit the type of its column:
 # an integer for the integer types, and one that fits in the type,
 # a number for the floating point types,
 # a boolean for `bool`, and a string for `str`.
-default_values = { quality = -1, humidity = 0.0, is_valid = false, note = "" }
+default = { quality = -1, humidity = 0.0, is_valid = false, note = "" }
 
-# A reader without default values requires every column to have a value.
+# A reader without defaults requires every column to have a value.
 [[csv_reader]]
 name = "StationCsvReader"
 table = "Station"
 
-# `default` says what `default_values` says, one column at a time,
-# and `name_in_file` says what the file calls a column
+# `name_in_file` says what the file calls a column
 # where that is not the name the specification uses,
 # so a header awkwardly spelled in the file
 # is not awkwardly spelled in every line of C++ that reads it.
-# One column takes its default from `default_values` or from `default`
-# and never from both,
-# and two columns may not be renamed to one name.
+# Two columns may not be renamed to one name.
 #
 # A parquet_reader takes the same two,
 # keyed by the flattened key of any part of a nested column;
@@ -130,7 +127,7 @@ default = { latitude = 0.0, longitude = 0.0 }
 [[parquet_reader]]
 name = "MeasurementParquetReader"
 table = "Measurement"
-default_values = { quality = -1, note = "unknown" }
+default = { quality = -1, note = "unknown" }
 
 
 # A csv_writer writes tables out as a CSV file.
@@ -161,6 +158,17 @@ table = "Measurement"
 [[csv_writer]]
 name = "StationCsvWriter"
 table = "Station"
+
+# A writer takes `name_in_file` as well,
+# keyed the same way as a reader's and read the other way around:
+# it is the name the writer gives a column in the file it writes,
+# so a table read under the names of the specification
+# is written back out under the names the file uses.
+# Two columns may not be written under one name.
+[[csv_writer]]
+name = "StationExportCsvWriter"
+table = "Station"
+name_in_file = { station_id = "Station ID", name = "Station Name" }
 
 
 # A parquet_writer writes tables out as a Parquet file.

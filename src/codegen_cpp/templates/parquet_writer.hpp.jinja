@@ -28,9 +28,12 @@ class {{ parquet_writer.name }} {
                 "row_group_length must be larger than zero");
         }
 
+        {# The columns are written under the names the file is to carry,
+           which are the names of the columns
+           unless the writer renames them. -#}
         schema_ = arrow::schema({
 {%- for column in columns %}
-            arrow::field("{{ column.member }}", {{ column.arrow }}),
+            arrow::field({{ column.name_in_file | cpp_string }}, {{ column.arrow }}),
 {%- endfor %}
         });
 

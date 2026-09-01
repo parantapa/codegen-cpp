@@ -353,13 +353,33 @@ table = "WorkSummary"
 # and writes each type back as the shape it declares:
 # a LIST for a vector, a MAP for a map, a plain group for a struct.
 #
-# A writer declares no names of its own and writes the names of the types,
+# A writer that declares no names of its own writes the names of the types,
 # so a file read through `name_in_file` and written back out by this writer
 # carries the names of the specification rather than the names it was read
 # with, and holds exactly the columns and fields the specification declares.
 [[parquet_writer]]
 name = "WorkParquetWriter"
 table = "Work"
+
+# A writer takes `name_in_file` as well,
+# keyed by the same flattened keys and read the other way around:
+# it is the name the writer gives the part in the file it writes.
+# This one is keyed exactly like the reader above,
+# so what that reader reads this writer writes back out unchanged,
+# down to the field of a struct and the field of a struct in a vector.
+# The same two rules hold: only a key that ends at a column
+# or at a field of a struct may be renamed,
+# and two parts of one group may not be written under one name.
+[[parquet_writer]]
+name = "WorkExportParquetWriter"
+table = "Work"
+
+[parquet_writer.name_in_file]
+work_id = "id"
+citations = "counts"
+"open_access.status" = "oa_status"
+"open_access.url" = "oa_url"
+"topics.element.name" = "display_name"
 
 
 # CSV has no way to hold a vector, a map or a struct,

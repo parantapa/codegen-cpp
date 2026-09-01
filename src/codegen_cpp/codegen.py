@@ -180,7 +180,10 @@ def cpp_literal(value: DefaultValue, type: ScalarType) -> str:
 
 
 def arrow_type_expression(
-    type: ScalarType | str, aggregates: dict[str, Aggregate]
+    type: ScalarType | str,
+    aggregates: dict[str, Aggregate],
+    names_in_file: dict[str, str] | None = None,
+    key: str = "",
 ) -> str:
     """
     Return the expression constructing the Arrow type that TYPE is stored as.
@@ -188,26 +191,39 @@ def arrow_type_expression(
     An aggregate type becomes the Arrow type of the Parquet shape it declares:
     a LIST for a vector, a MAP for a map and a plain group for a struct,
     each named the way a writer of this specification names it.
+
+    KEY is the flattened key that reaches TYPE,
+    and NAMES_IN_FILE renames the fields of a struct below it,
+    so that a writer builds the names that the file is to carry
+    rather than the names the specification uses.
     """
     if isinstance(type, ScalarType):
         return ARROW_TYPES[type]
 
+    names = names_in_file or {}
+
+    def below(step: str, type: ScalarType | str) -> str:
+        return arrow_type_expression(
+            type, aggregates, names, f"{key}.{step}" if key else step
+        )
+
     aggregate = aggregates[type]
     if isinstance(aggregate, Vector):
-        element = arrow_type_expression(aggregate.element, aggregates)
+        element = below(VECTOR_STEP, aggregate.element)
         return f'arrow::list(arrow::field("{VECTOR_STEP}", {element}))'
 
     if isinstance(aggregate, Map):
-        key = ARROW_TYPES[aggregate.key]
-        value = arrow_type_expression(aggregate.value, aggregates)
-        return f'arrow::map({key}, arrow::field("{MAP_STEP}", {value}))'
+        map_key = ARROW_TYPES[aggregate.key]
+        value = below(MAP_STEP, aggregate.value)
+        return f'arrow::map({map_key}, arrow::field("{MAP_STEP}", {value}))'
 
-    fields = ", ".join(
-        f'arrow::field("{field.name}", '
-        f"{arrow_type_expression(field.type, aggregates)})"
-        for field in aggregate.fields
-    )
-    return f"arrow::struct_({{{fields}}})"
+    fields: list[str] = []
+    for field in aggregate.fields:
+        below_key = f"{key}.{field.name}" if key else field.name
+        name = cpp_string(names.get(below_key, field.name))
+        fields.append(f"arrow::field({name}, {below(field.name, field.type)})")
+
+    return f"arrow::struct_({{{', '.join(fields)}}})"
 
 
 @dataclass(frozen=True)
@@ -282,7 +298,7 @@ def build_node(
         "key": key,
         "var": key.replace(".", "_"),
         "cpp": cpp_type(type),
-        "arrow": arrow_type_expression(type, aggregates),
+        "arrow": arrow_type_expression(type, aggregates, names_in_file, key),
         "member": member,
         "name_in_file": names_in_file.get(key, member),
         "step": key.rpartition(".")[2],
@@ -338,16 +354,17 @@ def table_nodes(
     Return one node per column of TABLE, in declaration order.
 
     GENERATED is the reader or the writer that the nodes are built for;
-    the defaults and the names of a reader are read off it.
+    the names in the file of either one are read off it,
+    and the defaults of a reader with them.
     """
     aggregates = aggregates or {}
 
     defaults: dict[str, DefaultValue] = {}
     names_in_file: dict[str, str] = {}
-    if isinstance(generated, Reader):
-        defaults.update(generated.default_values)
-        defaults.update(generated.default)
+    if generated is not None:
         names_in_file = generated.name_in_file
+    if isinstance(generated, Reader):
+        defaults.update(generated.default)
 
     return [
         build_node(
@@ -635,10 +652,12 @@ def render_csv_writer(csv_writer: CsvWriter, table: Table) -> str:
     """
     Return the C++ definition of CSV_WRITER.
 
-    TABLE is the table that CSV_WRITER writes out.
+    TABLE is the table that CSV_WRITER writes out;
+    a CSV holds no aggregate type, so its columns are all scalars.
     """
+    columns = table_nodes(table, None, csv_writer)
     template = ENVIRONMENT.get_template("csv_writer.hpp.jinja")
-    return template.render(csv_writer=csv_writer, table=table)
+    return template.render(csv_writer=csv_writer, table=table, columns=columns)
 
 
 def render_parquet_writer(

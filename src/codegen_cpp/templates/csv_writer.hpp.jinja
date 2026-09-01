@@ -9,9 +9,12 @@ class {{ csv_writer.name }} {
         std::optional<arrow::Compression::type> compression = std::nullopt,
         int compression_level = arrow::util::kUseDefaultCompressionLevel)
         : csv_file_(csv_file) {
+        {# The columns are written under the names the file is to carry,
+           which are the names of the columns
+           unless the writer renames them. -#}
         schema_ = arrow::schema({
-{%- for column in table.columns %}
-            arrow::field("{{ column.name }}", {{ column.type | arrow_type }}),
+{%- for column in columns %}
+            arrow::field({{ column.name_in_file | cpp_string }}, {{ column.arrow }}),
 {%- endfor %}
         });
 
@@ -46,19 +49,19 @@ class {{ csv_writer.name }} {
         if (writer_ == nullptr) [[unlikely]] {
             throw std::runtime_error("'" + csv_file_ + "' is closed");
         }
-{% for column in table.columns %}
-        {{ column.type | arrow_builder_type }} builder_{{ column.name }};
-        check(builder_{{ column.name }}.AppendValues(table.{{ column.name }}),
-              "failed to write column '{{ column.name }}'");
-        std::shared_ptr<arrow::Array> column_{{ column.name }};
-        check(builder_{{ column.name }}.Finish(&column_{{ column.name }}),
-              "failed to write column '{{ column.name }}'");
+{% for column in columns %}
+        {{ column.builder_type }} builder_{{ column.member }};
+        check(builder_{{ column.member }}.AppendValues(table.{{ column.member }}),
+              "failed to write column '{{ column.member }}'");
+        std::shared_ptr<arrow::Array> column_{{ column.member }};
+        check(builder_{{ column.member }}.Finish(&column_{{ column.member }}),
+              "failed to write column '{{ column.member }}'");
 {% endfor %}
         const auto batch = arrow::RecordBatch::Make(
             schema_, static_cast<std::int64_t>(table.size()),
             {
-{%- for column in table.columns %}
-                column_{{ column.name }},
+{%- for column in columns %}
+                column_{{ column.member }},
 {%- endfor %}
             });
 

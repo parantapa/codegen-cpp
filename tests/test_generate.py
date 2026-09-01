@@ -223,7 +223,7 @@ def test_generate_reports_invalid_spec(tmp_path: Path) -> None:
 READER = CsvReader(
     name="PointReader",
     table="Point",
-    default_values={"label": "n/a"},
+    default={"label": "n/a"},
 )
 
 
@@ -336,7 +336,7 @@ def test_generate_defines_every_csv_reader(tmp_path: Path) -> None:
 PARQUET_READER = ParquetReader(
     name="PointParquetReader",
     table="Point",
-    default_values={"label": "n/a"},
+    default={"label": "n/a"},
 )
 
 
@@ -460,6 +460,22 @@ def test_render_csv_writer_builds_every_column() -> None:
     assert "writer_->WriteRecordBatch(*batch)" in header
 
 
+RENAMING_WRITER = CsvWriter(
+    name="PointCsvWriter", table="Point", name_in_file={"id": "Point ID"}
+)
+
+
+def test_render_csv_writer_writes_the_names_of_the_file() -> None:
+    """A renamed column is written under the name the file is to give it."""
+    header = render_csv_writer(RENAMING_WRITER, TABLE)
+
+    assert 'arrow::field("Point ID", arrow::uint32()),' in header
+    assert 'arrow::field("label", arrow::utf8()),' in header
+
+    # The C++ member keeps the name that the table gives it.
+    assert "builder_id.AppendValues(table.id)" in header
+
+
 def test_generate_defines_every_csv_writer(tmp_path: Path) -> None:
     """Generate defines a class for every CSV writer of the spec."""
     spec_file = tmp_path / "points.toml"
@@ -500,6 +516,18 @@ def test_render_parquet_writer_writes_record_batches() -> None:
     assert "arrow::Compression::type compression = arrow::Compression::ZSTD" in header
     assert "std::int64_t default_row_group_length = 128000;" in header
     assert "writer_->WriteRecordBatch(*batch)" in header
+
+
+def test_render_parquet_writer_writes_the_names_of_the_file() -> None:
+    """A renamed column is written under the name the file is to give it."""
+    writer = ParquetWriter(
+        name="PointParquetWriter", table="Point", name_in_file={"id": "Point ID"}
+    )
+    header = render_parquet_writer(writer, TABLE)
+
+    assert 'arrow::field("Point ID", arrow::uint32()),' in header
+    assert 'arrow::field("label", arrow::utf8()),' in header
+    assert "builder_id.AppendValues(table.id)" in header
 
 
 def test_generate_defines_every_parquet_writer(tmp_path: Path) -> None:
@@ -1085,6 +1113,22 @@ def test_arrow_type_expression() -> None:
     )
 
 
+def test_arrow_type_expression_renames_the_fields_of_a_struct() -> None:
+    """A field is stored under the name that the file is to give it."""
+    names = {"spot.x": "across", "spot.tags.element": "ignored"}
+
+    assert arrow_type_expression("Spot", NESTED_TYPES, names, "spot") == (
+        'arrow::struct_({arrow::field("across", arrow::int32()), '
+        'arrow::field("tags", arrow::list(arrow::field("element", arrow::utf8())))})'
+    )
+
+    # The names are keyed by the flattened key, so another column keeps its own.
+    assert arrow_type_expression("Spot", NESTED_TYPES, names, "other") == (
+        'arrow::struct_({arrow::field("x", arrow::int32()), '
+        'arrow::field("tags", arrow::list(arrow::field("element", arrow::utf8())))})'
+    )
+
+
 def test_aggregate_includes() -> None:
     """A map asks for the header of the container that holds its pairs."""
     assert "vector" in aggregate_includes(NESTED_TYPES["Tags"]).std
@@ -1193,6 +1237,54 @@ def test_render_parquet_reader_escapes_the_name_in_the_file() -> None:
     assert r'->name() != "a\"b\\c")' in header
 
 
+def test_render_parquet_writer_names_a_nested_column_in_the_file() -> None:
+    """A writer builds the names the file is to carry, at every level."""
+    writer = ParquetWriter(
+        name="RowParquetWriter",
+        table="Row",
+        name_in_file={"spot": "place", "spot.x": "across"},
+    )
+
+    header = render_parquet_writer(writer, NESTED_TABLE, NESTED_TYPES)
+
+    # The column, and the field below it, are written under their names.
+    assert 'arrow::field("place", arrow::struct_({arrow::field("across"' in header
+    assert 'arrow::field("tags", arrow::list(arrow::field("element"' in header
+
+    # The builder of the column builds the same names as the schema.
+    assert (
+        '            arrow::struct_({arrow::field("across", arrow::int32()), '
+        'arrow::field("tags", arrow::list(arrow::field("element", arrow::utf8())))}),'
+        in header
+    )
+
+    # The C++ members keep the names that the table and the struct give them.
+    assert "        for (const auto& value : table.spot) {" in header
+    assert "        append_spot_tags(value.tags);" in header
+
+
+def test_render_parquet_writer_escapes_the_name_in_the_file() -> None:
+    """A file names a column however it likes; the header still compiles."""
+    writer = ParquetWriter(
+        name="PointParquetWriter", table="Point", name_in_file={"id": 'a"b\\c'}
+    )
+
+    header = render_parquet_writer(writer, TABLE)
+
+    assert r'arrow::field("a\"b\\c", arrow::uint32()),' in header
+
+
+def test_render_csv_writer_escapes_the_name_in_the_file() -> None:
+    """A file names a column however it likes; the header still compiles."""
+    writer = CsvWriter(
+        name="PointCsvWriter", table="Point", name_in_file={"id": 'a"b\\c'}
+    )
+
+    header = render_csv_writer(writer, TABLE)
+
+    assert r'arrow::field("a\"b\\c", arrow::uint32()),' in header
+
+
 def test_render_parquet_writer_builds_a_nested_column() -> None:
     """A column of an aggregate type is built level by level."""
     header = render_parquet_writer(NESTED_WRITER, NESTED_TABLE, NESTED_TYPES)
@@ -1231,9 +1323,15 @@ def test_generate_defines_every_class_over_a_nested_table(tmp_path: Path) -> Non
         "class WorkParquetReader {",
         "class WorkSummaryParquetReader {",
         "class WorkParquetWriter {",
+        "class WorkExportParquetWriter {",
         "class WorkSummaryCsvWriter {",
     ):
         assert header.count(declaration) == 1, declaration
+
+    # The writer that renames writes the names that the reader looks for,
+    # and the one that does not writes the names of the specification.
+    assert 'arrow::field("display_name", arrow::utf8())' in header
+    assert 'arrow::field("name", arrow::utf8())' in header
 
     # A reader of a nested table reaches for the schema of the Parquet file.
     assert "#include <parquet/schema.h>" in header

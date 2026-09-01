@@ -57,6 +57,18 @@ void write_file(const std::string& path, const std::string& contents) {
     std::fclose(file);
 }
 
+std::string read_file(const std::string& path) {
+    std::string contents;
+    std::FILE* file = std::fopen(path.c_str(), "r");
+    char buffer[4096];
+    std::size_t read = 0;
+    while ((read = std::fread(buffer, 1, sizeof(buffer), file)) > 0) {
+        contents.append(buffer, read);
+    }
+    std::fclose(file);
+    return contents;
+}
+
 // Build an Arrow table with the columns of 'Point', in the given order.
 std::shared_ptr<arrow::Table> point_table(
     const std::vector<std::string>& order,
@@ -449,6 +461,34 @@ void test_csv_writer_round_trip() {
     CHECK(read_back[1].flag == false);
 }
 
+// A writer writes the names that the file is to carry,
+// which are the names that the reader of the same file looks for.
+void test_csv_writer_writes_the_names_of_the_file() {
+    Point points;
+    points.push_back(1, "alpha", 1.5, true);
+    points.push_back(2, "beta", 2.5, false);
+
+    {
+        PointRenamingCsvWriter writer("renamed_written.csv");
+        writer.write_batch(points);
+        writer.close();
+    }
+
+    // Arrow quotes every name it writes into the header.
+    CHECK(read_file("renamed_written.csv")
+              .starts_with("\"Point ID\",\"label\",\"Score (mean)\",\"flag\"\n"));
+
+    PointRenamingCsvReader reader("renamed_written.csv", 4);
+    Point read_back;
+    reader.read_all(read_back);
+
+    CHECK(read_back.size() == 2);
+    CHECK(read_back.id == (std::vector<std::int64_t>{1, 2}));
+    CHECK(read_back[0].label == "alpha");
+    CHECK(read_back[1].score == 2.5);
+    CHECK(read_back[0].flag == true);
+}
+
 void test_csv_writer_compresses() {
     Point points;
     points.push_back(1, "alpha", 1.5, true);
@@ -561,6 +601,36 @@ void test_parquet_writer_round_trip() {
     CHECK(read_back[1].flag == false);
 }
 
+// A writer writes the names that the file is to carry,
+// which are the names that the reader of the same file looks for.
+void test_parquet_writer_writes_the_names_of_the_file() {
+    Point points;
+    points.push_back(1, "alpha", 1.5, true);
+    points.push_back(2, "beta", 2.5, false);
+
+    {
+        PointRenamingParquetWriter writer("renamed_written.parquet");
+        writer.write_batch(points);
+        writer.close();
+    }
+
+    PointRenamingParquetReader reader("renamed_written.parquet", 4);
+    Point read_back;
+    reader.read_all(read_back);
+
+    CHECK(read_back.size() == 2);
+    CHECK(read_back.id == (std::vector<std::int64_t>{1, 2}));
+    CHECK(read_back[0].label == "alpha");
+    CHECK(read_back[1].score == 2.5);
+    CHECK(read_back[0].flag == true);
+
+    // The file holds the names of the file and not the names of the table,
+    // so the reader that looks for those does not find them.
+    const std::string error = error_of(
+        [] { PointParquetReader plain("renamed_written.parquet", 4); });
+    CHECK(contains(error, "has no column 'id'"));
+}
+
 void test_parquet_writer_options() {
     Point points;
     for (std::int64_t i = 0; i < 5; ++i) {
@@ -641,11 +711,13 @@ int main() {
     test_readers_reject_a_zero_batch_size();
 
     test_csv_writer_round_trip();
+    test_csv_writer_writes_the_names_of_the_file();
     test_csv_writer_compresses();
     test_csv_writer_closes_itself();
     test_csv_writer_reports_a_bad_path();
 
     test_parquet_writer_round_trip();
+    test_parquet_writer_writes_the_names_of_the_file();
     test_parquet_writer_options();
     test_parquet_writer_closes_itself();
     test_parquet_writer_reports_a_bad_path();

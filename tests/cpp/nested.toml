@@ -99,6 +99,34 @@ spots = "points"
 "spots.element.across" = -1
 "spots.element.down" = -1.0
 
+# The same columns written back out under the names of the file,
+# which is what UParquetReader reads and what VParquetReader checks.
+[[parquet_writer]]
+name = "UParquetWriter"
+table = "U"
+
+[parquet_writer.name_in_file]
+ident = "id"
+spots = "points"
+"spots.element.across" = "x"
+"spots.element.down" = "y"
+
+# The columns that UParquetWriter writes, under the names it gives them.
+[[table]]
+name = "V"
+columns = [
+    { name = "id", type = "i64" },
+    { name = "points", type = "Points" },
+]
+
+[[parquet_reader]]
+name = "VParquetReader"
+table = "V"
+
+[parquet_reader.default]
+"points.element.x" = 0
+"points.element.y" = 0.0
+
 # The same types read out of a file that holds a null at every level.
 # The defaults belong to this reader rather than to the types,
 # so they are not the ones that TParquetReader uses.

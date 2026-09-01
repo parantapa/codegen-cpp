@@ -14,6 +14,7 @@ from codegen_cpp.spec import (
     NUMERIC_TYPES,
     Column,
     CsvReader,
+    CsvWriter,
     ScalarType,
     Table,
     selected_arrays,
@@ -55,21 +56,12 @@ def test_table_nodes_without_a_reader() -> None:
 
 
 def test_table_nodes_of_a_csv_reader_carry_its_defaults() -> None:
-    """A column with a default value is the one that may hold a null."""
-    reader = CsvReader(name="R", table="Point", default_values={"label": ""})
+    """A column with a default is the one that may hold a null."""
+    reader = CsvReader(name="R", table="Point", default={"label": ""})
 
     nodes = table_nodes(TABLE, None, reader)
 
     assert [node.default for node in nodes] == [None, 'std::string("")', None]
-
-
-def test_table_nodes_of_a_csv_reader_carry_its_default_section() -> None:
-    """A CSV reader keys its defaults by the names of the columns."""
-    reader = CsvReader(name="R", table="Point", default={"score": -1.5})
-
-    nodes = table_nodes(TABLE, None, reader)
-
-    assert [node.default for node in nodes] == [None, None, "double(-1.5)"]
 
 
 def test_table_nodes_of_a_csv_reader_carry_its_names_in_the_file() -> None:
@@ -77,6 +69,16 @@ def test_table_nodes_of_a_csv_reader_carry_its_names_in_the_file() -> None:
     reader = CsvReader(name="R", table="Point", name_in_file={"id": "ident"})
 
     nodes = table_nodes(TABLE, None, reader)
+
+    assert [node.name_in_file for node in nodes] == ["ident", "label", "score"]
+    assert [node.member for node in nodes] == ["id", "label", "score"]
+
+
+def test_table_nodes_of_a_csv_writer_carry_its_names_in_the_file() -> None:
+    """A CSV writer writes a column under the name the file is to give it."""
+    writer = CsvWriter(name="W", table="Point", name_in_file={"id": "ident"})
+
+    nodes = table_nodes(TABLE, None, writer)
 
     assert [node.name_in_file for node in nodes] == ["ident", "label", "score"]
     assert [node.member for node in nodes] == ["id", "label", "score"]
