@@ -393,9 +393,7 @@ so one chunk fits a dataset of any size.
 | `none`    |        | the default, which compresses nothing   |
 | `deflate` | 0 to 9 | zlib, which is built into HDF5 itself   |
 | `zstd`    | 1 to 22| a plugin that HDF5 loads at run time    |
-| `bzip2`   | 1 to 9 | a plugin that HDF5 loads at run time    |
 | `lz4`     |        | a plugin that HDF5 loads at run time    |
-| `lzf`     |        | a plugin that HDF5 loads at run time    |
 
 `compression_level` tunes the codecs that take a level,
 and is an error for the ones that do not.

@@ -515,8 +515,6 @@ class Compression(Enum):
     deflate = "deflate"
     zstd = "zstd"
     lz4 = "lz4"
-    bzip2 = "bzip2"
-    lzf = "lzf"
 
 
 # The range of the levels that a filter takes,
@@ -526,7 +524,6 @@ class Compression(Enum):
 COMPRESSION_LEVELS = {
     Compression.deflate: (0, 9),
     Compression.zstd: (1, 22),
-    Compression.bzip2: (1, 9),
 }
 
 

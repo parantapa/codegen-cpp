@@ -119,8 +119,6 @@ HDF5_NATIVE_TYPES = {
 HDF5_FILTER_IDS = {
     Compression.zstd: 32015,
     Compression.lz4: 32004,
-    Compression.bzip2: 307,
-    Compression.lzf: 32000,
 }
 
 # The level that `deflate` is asked for with where a writer names none,

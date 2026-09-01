@@ -229,12 +229,12 @@ chunk = [65536]
 
 # `compression` names the filter the chunks are compressed with:
 #
-#     none                       the default, which stores them as they are
-#     deflate                    zlib, which is built into HDF5 itself
-#     zstd  lz4  bzip2  lzf      filters that HDF5 loads at run time
+#     none            the default, which stores them as they are
+#     deflate         zlib, which is built into HDF5 itself
+#     zstd  lz4       filters that HDF5 loads at run time
 #
 # `compression_level` tunes the ones that take a level:
-# 0 to 9 for `deflate`, 1 to 22 for `zstd`, and 1 to 9 for `bzip2`.
+# 0 to 9 for `deflate` and 1 to 22 for `zstd`.
 # A filter that is left without one compresses the way it was built to,
 # and `deflate` without one is asked for at level 6.
 #
