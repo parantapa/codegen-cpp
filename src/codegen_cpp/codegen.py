@@ -11,6 +11,7 @@ from .spec import (
     MAP_STEP,
     VECTOR_STEP,
     Aggregate,
+    Compression,
     CsvReader,
     CsvWriter,
     Dataset,
@@ -109,6 +110,24 @@ HDF5_NATIVE_TYPES = {
     ScalarType.f32: "H5::PredType::NATIVE_FLOAT",
     ScalarType.f64: "H5::PredType::NATIVE_DOUBLE",
 }
+
+
+# The compression filters that hdf5 loads at run time,
+# by the id each of them is registered under.
+# `deflate` is built into hdf5 and is asked for by name rather than by id,
+# so it is not one of these, and neither is `none`.
+HDF5_FILTER_IDS = {
+    Compression.zstd: 32015,
+    Compression.lz4: 32004,
+    Compression.bzip2: 307,
+    Compression.lzf: 32000,
+}
+
+# The level that `deflate` is asked for with where a writer names none,
+# which is the level that hdf5 itself suggests.
+# Every other filter is asked for without a level instead,
+# which leaves it the one the plugin holding it was built with.
+DEFAULT_DEFLATE_LEVEL = 6
 
 
 def cpp_type(type: ScalarType | str) -> str:
@@ -578,6 +597,40 @@ def parquet_reader_includes(nodes: Iterable[TypeNode]) -> Includes:
     return PARQUET_READER_INCLUDES
 
 
+def hdf5_filters(hdf5_writer: Hdf5Writer) -> list[str]:
+    """
+    Return the statements putting the filters of HDF5_WRITER on `plist`.
+
+    They come out in the order the filters are applied,
+    which is the order they are added in,
+    so the shuffle filter is added before the compressor it feeds.
+    """
+    lines: list[str] = []
+    if hdf5_writer.shuffle:
+        lines.append("plist.setShuffle();")
+
+    compression = hdf5_writer.compression
+    level = hdf5_writer.compression_level
+
+    if compression is Compression.none:
+        return lines
+
+    if compression is Compression.deflate:
+        lines.append(
+            f"plist.setDeflate({DEFAULT_DEFLATE_LEVEL if level is None else level});"
+        )
+        return lines
+
+    filter_id = HDF5_FILTER_IDS[compression]
+    if level is None:
+        lines.append(f"plist.setFilter({filter_id}, H5Z_FLAG_MANDATORY);")
+    else:
+        lines.append(f"const unsigned int cd_values[] = {{{level}u}};")
+        lines.append(f"plist.setFilter({filter_id}, H5Z_FLAG_MANDATORY, 1, cd_values);")
+
+    return lines
+
+
 def hdf5_includes(dataset: Dataset) -> Includes:
     """Return the headers that an HDF5 reader or writer of DATASET needs."""
     std = {"array", "cstddef", "stdexcept", "string"}
@@ -704,7 +757,12 @@ def render_hdf5_writer(hdf5_writer: Hdf5Writer, dataset: Dataset) -> str:
     DATASET is the dataset that HDF5_WRITER writes out.
     """
     template = ENVIRONMENT.get_template("hdf5_writer.hpp.jinja")
-    return template.render(hdf5_writer=hdf5_writer, dataset=dataset)
+    return template.render(
+        hdf5_writer=hdf5_writer,
+        dataset=dataset,
+        filters=hdf5_filters(hdf5_writer),
+        loaded_filter=hdf5_writer.compression in HDF5_FILTER_IDS,
+    )
 
 
 def spec_parts(spec: Spec) -> tuple[Includes, list[str]]:

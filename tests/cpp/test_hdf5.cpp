@@ -3,9 +3,11 @@
 // reads them back with the generated readers,
 // and checks the arrays and the errors that the readers report.
 
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -536,6 +538,179 @@ void test_include_writes_only_the_arrays_it_lists() {
     CHECK(grid.kind[0, 0] == untouched_kind);
 }
 
+// The name of the file that the compressed writers write,
+// which the run without the plugins reads back.
+const std::string kZstdFile = "written_grid_zstd.h5";
+
+// Return the number of filters that the array called name of the group
+// '/out' of the file called path is stored through.
+int filters_of(const std::string& path, const std::string& name) {
+    H5::H5File file(path, H5F_ACC_RDONLY);
+    const H5::DataSet array = file.openDataSet("/out/" + name);
+    return array.getCreatePlist().getNfilters();
+}
+
+// A chunk is worth asking for on its own, and asks for no filter.
+void test_writes_a_chunked_dataset() {
+    const std::string path = "written_grid_chunked.h5";
+    {
+        Grid grid(grid_rows, grid_cols);
+        fill_expected(grid);
+
+        H5::H5File file(path, H5F_ACC_TRUNC);
+        write_grid_chunked(file, "/out", grid);
+    }
+
+    {
+        H5::H5File file(path, H5F_ACC_RDONLY);
+        const H5::DataSet array = file.openDataSet("/out/temperature");
+        const H5::DSetCreatPropList plist = array.getCreatePlist();
+
+        CHECK(plist.getLayout() == H5D_CHUNKED);
+        CHECK(plist.getNfilters() == 0);
+
+        std::array<hsize_t, 2> chunk = {0, 0};
+        plist.getChunk(2, chunk.data());
+        CHECK(chunk[0] == 1);
+        CHECK(chunk[1] == 2);
+    }
+
+    H5::H5File file(path, H5F_ACC_RDONLY);
+    Grid grid(grid_rows, grid_cols);
+    fill_untouched(grid);
+    read_grid(file, "/out", grid);
+
+    check_grid_holds_the_expected(grid);
+}
+
+// Deflate is built into hdf5, so this round trip needs no plugin.
+void test_writes_a_deflated_dataset() {
+    const std::string path = "written_grid_deflate.h5";
+    {
+        Grid grid(grid_rows, grid_cols);
+        fill_expected(grid);
+
+        H5::H5File file(path, H5F_ACC_TRUNC);
+        write_grid_deflate(file, "/out", grid);
+    }
+
+    // The shuffle filter and the compressor, in that order.
+    CHECK(filters_of(path, "temperature") == 2);
+
+    H5::H5File file(path, H5F_ACC_RDONLY);
+    Grid grid(grid_rows, grid_cols);
+    fill_untouched(grid);
+    read_grid(file, "/out", grid);
+
+    check_grid_holds_the_expected(grid);
+}
+
+// Zstandard is a filter that hdf5 loads at run time.
+void test_writes_a_dataset_through_a_filter_of_a_plugin() {
+    {
+        Grid grid(grid_rows, grid_cols);
+        fill_expected(grid);
+
+        H5::H5File file(kZstdFile, H5F_ACC_TRUNC);
+        write_grid_zstd(file, "/out", grid);
+    }
+
+    CHECK(filters_of(kZstdFile, "temperature") == 2);
+
+    {
+        // The chunk of the writer reaches past the array,
+        // so it was cut down to the array on the way out.
+        H5::H5File file(kZstdFile, H5F_ACC_RDONLY);
+        std::array<hsize_t, 2> chunk = {0, 0};
+        file.openDataSet("/out/temperature").getCreatePlist().getChunk(
+            2, chunk.data());
+        CHECK(chunk[0] == grid_rows);
+        CHECK(chunk[1] == grid_cols);
+    }
+
+    H5::H5File file(kZstdFile, H5F_ACC_RDONLY);
+    Grid grid(grid_rows, grid_cols);
+    fill_untouched(grid);
+    read_grid(file, "/out", grid);
+
+    check_grid_holds_the_expected(grid);
+}
+
+// A filter that takes no level is asked for with none.
+void test_writes_a_dataset_through_a_filter_without_a_level() {
+    const std::string path = "written_grid_lz4.h5";
+    {
+        Grid grid(grid_rows, grid_cols);
+        fill_expected(grid);
+
+        H5::H5File file(path, H5F_ACC_TRUNC);
+        write_grid_lz4(file, "/out", grid);
+    }
+
+    CHECK(filters_of(path, "temperature") == 1);
+
+    H5::H5File file(path, H5F_ACC_RDONLY);
+    Grid grid(grid_rows, grid_cols);
+    fill_untouched(grid);
+    read_grid(file, "/out", grid);
+
+    check_grid_holds_the_expected(grid);
+}
+
+// A column major dataset is gathered into row major order before it is
+// compressed, so an element that takes a wrong turn shows up here.
+void test_writes_a_compressed_column_major_dataset() {
+    const std::string path = "written_field_zstd.h5";
+    {
+        Field field(field_x, field_y, field_z);
+        fill_expected(field);
+
+        H5::H5File file(path, H5F_ACC_TRUNC);
+        write_field_zstd(file, "/out", field);
+    }
+
+    CHECK(filters_of(path, "value") == 2);
+
+    H5::H5File file(path, H5F_ACC_RDONLY);
+    Field field(field_x, field_y, field_z);
+    read_field(file, "/out", field);
+
+    check_field_holds_the_expected(field);
+}
+
+// Without the plugin, a writer says so before it writes anything,
+// and a reader says so about the file that was written with it.
+// This runs with HDF5_PLUGIN_PATH cleared,
+// after the run that leaves the file behind.
+void test_reports_a_filter_that_is_not_there() {
+    Grid grid(grid_rows, grid_cols);
+    fill_expected(grid);
+
+    H5::H5File out("written_grid_no_plugin.h5", H5F_ACC_TRUNC);
+    const std::string write_error =
+        error_of([&] { write_grid_zstd(out, "/out", grid); });
+    CHECK(contains(write_error, "the 'zstd' filter is not available"));
+    CHECK(contains(write_error, "HDF5_PLUGIN_PATH"));
+
+    // Deflate is built into hdf5, so it is there whatever the plugin path is.
+    CHECK(error_of([&] { write_grid_deflate(out, "/deflate", grid); }).empty());
+
+    // The run with the plugins leaves the file behind, and ctest orders it
+    // before this one; on its own there is nothing here to read back.
+    if (!std::filesystem::exists(kZstdFile)) {
+        std::printf("FAIL '%s' is not there; run the 'hdf5' test first\n",
+                    kZstdFile.c_str());
+        ++failures;
+        return;
+    }
+
+    H5::H5File file(kZstdFile, H5F_ACC_RDONLY);
+    const std::string read_error =
+        error_of([&] { read_grid(file, "/out", grid); });
+    CHECK(contains(read_error, "is stored with a filter that is not available"));
+    CHECK(contains(read_error, "HDF5_PLUGIN_PATH"));
+}
+
 void test_write_reports_a_file_that_is_open_for_reading() {
     const std::string path = write_test_file();
     H5::H5File file(path, H5F_ACC_RDONLY);
@@ -549,10 +724,23 @@ void test_write_reports_a_file_that_is_open_for_reading() {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
     // The readers report their errors by throwing,
     // so the library does not have to print them as well.
     H5::Exception::dontPrint();
+
+    // The run without the plugins reads the file that the run with them
+    // leaves behind, and checks nothing that needs a filter of a plugin.
+    if (argc > 1 && std::string(argv[1]) == "--without-plugins") {
+        test_reports_a_filter_that_is_not_there();
+
+        if (failures == 0) {
+            std::printf("all checks passed\n");
+            return 0;
+        }
+        std::printf("%d check(s) failed\n", failures);
+        return 1;
+    }
 
     test_reads_every_array();
     test_include_reads_only_the_arrays_it_lists();
@@ -576,6 +764,12 @@ int main() {
     test_write_replaces_an_array_of_another_shape_and_datatype();
     test_include_writes_only_the_arrays_it_lists();
     test_write_reports_a_file_that_is_open_for_reading();
+
+    test_writes_a_chunked_dataset();
+    test_writes_a_deflated_dataset();
+    test_writes_a_dataset_through_a_filter_of_a_plugin();
+    test_writes_a_dataset_through_a_filter_without_a_level();
+    test_writes_a_compressed_column_major_dataset();
 
     if (failures == 0) {
         std::printf("all checks passed\n");

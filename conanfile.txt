@@ -1,6 +1,7 @@
 [requires]
 arrow/25.0.1
 hdf5/1.14.6
+hdf5_plugins/2.2.0.pci
 mdspan/0.6.0
 
 [options]
@@ -11,6 +12,21 @@ arrow/*:with_snappy=True
 arrow/*:with_zlib=True
 arrow/*:with_zstd=True
 hdf5/*:enable_cxx=True
+
+# The compression filters that hdf5 loads at run time.
+# Only the ones the tests use are built.
+hdf5_plugins/*:zstd=True
+hdf5_plugins/*:lz4=True
+hdf5_plugins/*:bitgroom=False
+hdf5_plugins/*:bitround=False
+hdf5_plugins/*:blosc=False
+hdf5_plugins/*:blosc2=False
+hdf5_plugins/*:bshuf=False
+hdf5_plugins/*:bzip2=False
+hdf5_plugins/*:granular_bitround=False
+hdf5_plugins/*:jpeg=False
+hdf5_plugins/*:lzf=False
+hdf5_plugins/*:zfp=False
 
 [generators]
 CMakeDeps

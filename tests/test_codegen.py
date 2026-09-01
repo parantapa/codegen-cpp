@@ -3,18 +3,22 @@
 from codegen_cpp.codegen import (
     CPP_TYPES,
     ENVIRONMENT,
+    HDF5_FILTER_IDS,
     HDF5_NATIVE_TYPES,
     cpp_literal,
     cpp_string,
     cpp_type,
+    hdf5_filters,
     hdf5_native_type,
     table_nodes,
 )
 from codegen_cpp.spec import (
     NUMERIC_TYPES,
     Column,
+    Compression,
     CsvReader,
     CsvWriter,
+    Hdf5Writer,
     ScalarType,
     Table,
     selected_arrays,
@@ -118,6 +122,47 @@ def test_cpp_string_is_a_filter() -> None:
 def test_every_numeric_type_has_an_hdf5_spelling() -> None:
     """Every type that an array may hold maps to an HDF5 predefined type."""
     assert set(HDF5_NATIVE_TYPES) == NUMERIC_TYPES
+
+
+def test_every_compression_is_asked_for_one_way_or_the_other() -> None:
+    """A filter is either built into hdf5 or loaded by the id it is under."""
+    built_in = {Compression.none, Compression.deflate}
+
+    assert built_in | set(HDF5_FILTER_IDS) == set(Compression)
+    assert built_in.isdisjoint(HDF5_FILTER_IDS)
+
+
+def test_hdf5_filters_of_a_writer_that_asks_for_nothing() -> None:
+    """A writer without a filter puts nothing on the property list."""
+    assert hdf5_filters(Hdf5Writer(name="w", dataset="D")) == []
+    assert hdf5_filters(Hdf5Writer(name="w", dataset="D", chunk=[4])) == []
+
+
+def test_hdf5_filters_puts_the_shuffle_filter_first() -> None:
+    """The pipeline is applied in the order it is built."""
+    writer = Hdf5Writer(
+        name="w",
+        dataset="D",
+        chunk=[4],
+        compression=Compression.deflate,
+        compression_level=9,
+        shuffle=True,
+    )
+
+    assert hdf5_filters(writer) == ["plist.setShuffle();", "plist.setDeflate(9);"]
+
+
+def test_hdf5_filters_of_a_filter_hdf5_loads_at_run_time() -> None:
+    """A filter of a plugin is asked for by its id, and by its level with it."""
+    writer = Hdf5Writer(name="w", dataset="D", chunk=[4], compression=Compression.zstd)
+
+    assert hdf5_filters(writer) == ["plist.setFilter(32015, H5Z_FLAG_MANDATORY);"]
+
+    with_level = writer.model_copy(update={"compression_level": 7})
+    assert hdf5_filters(with_level) == [
+        "const unsigned int cd_values[] = {7u};",
+        "plist.setFilter(32015, H5Z_FLAG_MANDATORY, 1, cd_values);",
+    ]
 
 
 def test_hdf5_native_type() -> None:

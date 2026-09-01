@@ -26,6 +26,7 @@ from codegen_cpp.codegen import (
 )
 from codegen_cpp.spec import (
     Column,
+    Compression,
     CsvReader,
     CsvWriter,
     Dataset,
@@ -895,6 +896,116 @@ def test_render_hdf5_writer_replaces_an_array_that_is_there() -> None:
     assert 'group.unlink("burn_time");' in header
     assert "const H5::DataSet array = group.createDataSet(" in header
     assert '"burn_time", H5::PredType::NATIVE_FLOAT, space);' in header
+
+
+COMPRESSED_WRITER = Hdf5Writer(
+    name="write_tile_data",
+    dataset="TileData",
+    chunk=[64, 32],
+    compression=Compression.zstd,
+    compression_level=5,
+    shuffle=True,
+)
+
+
+def test_render_hdf5_writer_stores_the_arrays_in_chunks() -> None:
+    """A chunk is declared once and cut down to the array it is stored in."""
+    header = render_hdf5_writer(COMPRESSED_WRITER, DATASET)
+
+    assert "H5::DSetCreatPropList plist;" in header
+    assert "std::array<hsize_t, TileData::rank> chunk = {64, 32};" in header
+    assert "if (chunk[i] > extents[i]) {" in header
+    assert "if (chunk[i] < 1) {" in header
+    assert "plist.setChunk(static_cast<int>(TileData::rank), chunk.data());" in header
+
+    # The property list reaches every array of the dataset.
+    assert header.count('"burn_time", H5::PredType::NATIVE_FLOAT,\n') == 1
+    assert header.count("                space, plist);") == 2
+
+
+def test_render_hdf5_writer_puts_the_filters_on_in_order() -> None:
+    """The shuffle filter is added before the compressor it feeds."""
+    header = render_hdf5_writer(COMPRESSED_WRITER, DATASET)
+
+    assert "plist.setShuffle();" in header
+    assert "const unsigned int cd_values[] = {5u};" in header
+    assert "plist.setFilter(32015, H5Z_FLAG_MANDATORY, 1, cd_values);" in header
+    assert header.index("plist.setShuffle();") < header.index("plist.setFilter(")
+
+
+def test_render_hdf5_writer_reports_a_filter_that_is_not_there() -> None:
+    """A filter that hdf5 loads at run time is looked for before it is used."""
+    header = render_hdf5_writer(COMPRESSED_WRITER, DATASET)
+
+    assert "if (!plist.allFiltersAvail()) [[unlikely]] {" in header
+    assert "\"the 'zstd' filter is not available; \"" in header
+    assert '"in HDF5_PLUGIN_PATH");' in header
+
+
+def test_render_hdf5_writer_asks_for_a_built_in_filter_by_name() -> None:
+    """Deflate is built into hdf5, so it is asked for by name and not by id."""
+    writer = Hdf5Writer(
+        name="write_tile_data",
+        dataset="TileData",
+        chunk=[64, 32],
+        compression=Compression.deflate,
+    )
+
+    header = render_hdf5_writer(writer, DATASET)
+
+    # A writer that names no level takes the one hdf5 itself suggests.
+    assert "plist.setDeflate(6);" in header
+    assert "setFilter" not in header
+    assert '"hdf5 was built without it");' in header
+    assert "HDF5_PLUGIN_PATH" not in header
+
+    with_level = writer.model_copy(update={"compression_level": 9})
+    assert "plist.setDeflate(9);" in render_hdf5_writer(with_level, DATASET)
+
+
+def test_render_hdf5_writer_of_a_filter_that_takes_no_level() -> None:
+    """A filter without a level is asked for with no data of its own."""
+    writer = Hdf5Writer(
+        name="write_tile_data",
+        dataset="TileData",
+        chunk=[8, 8],
+        compression=Compression.lz4,
+    )
+
+    header = render_hdf5_writer(writer, DATASET)
+
+    assert "plist.setFilter(32004, H5Z_FLAG_MANDATORY);" in header
+    assert "cd_values" not in header
+
+
+def test_render_hdf5_writer_chunks_without_compressing() -> None:
+    """A chunk is worth asking for on its own, and asks for no filter."""
+    writer = Hdf5Writer(name="write_tile_data", dataset="TileData", chunk=[8, 8])
+
+    header = render_hdf5_writer(writer, DATASET)
+
+    assert "plist.setChunk(static_cast<int>(TileData::rank), chunk.data());" in header
+    assert "setFilter" not in header
+    assert "setDeflate" not in header
+    assert "allFiltersAvail" not in header
+
+
+def test_render_hdf5_writer_without_a_chunk_stores_the_arrays_as_they_are() -> None:
+    """A writer that declares no layout creates the arrays it always did."""
+    header = render_hdf5_writer(HDF5_WRITER, DATASET)
+
+    assert "DSetCreatPropList" not in header
+    assert "chunk" not in header
+    assert '"burn_time", H5::PredType::NATIVE_FLOAT, space);' in header
+
+
+def test_render_hdf5_reader_reports_a_filter_that_is_not_there() -> None:
+    """An array read through a filter that is not there is reported as such."""
+    header = render_hdf5_reader(HDF5_READER, DATASET)
+
+    assert "if (!array.getCreatePlist().allFiltersAvail()) [[unlikely]] {" in header
+    assert '"\' is stored with a filter that is not "' in header
+    assert '"in HDF5_PLUGIN_PATH");' in header
 
 
 def test_render_hdf5_writer_builds_one_dataspace_for_every_array() -> None:

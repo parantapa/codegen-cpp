@@ -377,6 +377,45 @@ and may not name the same array twice.
 Declaring both lists is an error,
 and so is a reader or writer left with no array at all.
 
+An `hdf5_writer` may also say how the arrays are laid out in the file.
+`chunk` is the shape of one chunk, one extent per dim of the dataset,
+and every extent of it is at least one;
+it turns the contiguous layout that a writer uses by default
+into the chunked layout that a filter needs.
+An extent that reaches past the array it is stored along
+is cut down to the array when the file is written,
+so one chunk fits a dataset of any size.
+
+`compression` names the filter the chunks are compressed with:
+
+| Codec     | Level  | Where it comes from                    |
+| --------- | ------ | -------------------------------------- |
+| `none`    |        | the default, which compresses nothing   |
+| `deflate` | 0 to 9 | zlib, which is built into HDF5 itself   |
+| `zstd`    | 1 to 22| a plugin that HDF5 loads at run time    |
+| `bzip2`   | 1 to 9 | a plugin that HDF5 loads at run time    |
+| `lz4`     |        | a plugin that HDF5 loads at run time    |
+| `lzf`     |        | a plugin that HDF5 loads at run time    |
+
+`compression_level` tunes the codecs that take a level,
+and is an error for the ones that do not.
+A codec that takes one and is left without it
+compresses the way the plugin holding it was built to,
+except `deflate`, which is asked for at level 6.
+`shuffle` puts the shuffle filter before the compressor,
+which sorts the bytes of the elements by position
+and usually pays for itself on an array of numbers.
+Every one of the three asks for `chunk` as well,
+because a filter only applies to an array stored in chunks.
+
+Everything but `deflate` lives in a plugin
+that HDF5 loads at run time out of the directories
+that the `HDF5_PLUGIN_PATH` environment variable names,
+so a program that writes or reads through one
+needs the plugin beside it rather than linked into it.
+The `hdf5_plugins` package builds them;
+see the build instructions below.
+
 ## The generated code
 
 The whole specification is generated into one header,
@@ -604,6 +643,25 @@ on the way out, the same way the reader lays them out on the way in.
 The file has to be open for writing;
 a read-only file is reported like any other failure.
 
+A writer that declares a `chunk` builds one `H5::DSetCreatPropList`
+for every array it writes,
+cuts the chunk down to the shape `data` was allocated with,
+and puts the filters it declares on the list in the order they are applied,
+the shuffle filter first.
+Nothing of the sort is written for a writer that declares no layout,
+which stores its arrays exactly as it always did.
+
+A filter has to be there before anything is written through it,
+so a writer looks for its own filters before it creates the first array,
+and a reader looks for the filters of an array before it reads one.
+Either one throws a `std::runtime_error` naming `HDF5_PLUGIN_PATH`
+where the filter is missing,
+rather than leaving HDF5 to report it further down.
+Reading is otherwise unaware of compression:
+HDF5 decompresses an array as it reads it,
+so a reader needs no filter declaration of its own,
+and a file written through a filter reads back through any reader of it.
+
 A reader or a writer contributes nothing but its one function:
 the checks and the transfer are written out in place for every array,
 so any number of them can share a header.
@@ -631,7 +689,7 @@ The tests under `tests/cpp` generate a header per specification,
 write CSV and Parquet files with Arrow
 and HDF5 files with both the HDF5 C++ API and the generated writers,
 and read them back with the generated readers.
-Arrow, HDF5 and `mdspan` are installed with Conan;
+Arrow, HDF5, `hdf5_plugins` and `mdspan` are installed with Conan;
 see `conanfile.txt` for the features they are built with.
 Note that Arrow needs C++20 or later,
 which the default Conan profile does not ask for.
@@ -643,6 +701,38 @@ cmake -S tests/cpp -B build/cpp \
     -DCMAKE_BUILD_TYPE=Release
 cmake --build build/cpp
 ctest --test-dir build/cpp --output-on-failure
+```
+
+`hdf5_plugins` comes from the `pb-conan-index` remote
+and holds the compression filters that HDF5 loads at run time.
+The CMake project points the HDF5 tests at the directory it packages them in,
+so `ctest` finds them without any environment of its own;
+a program of your own finds them
+through the `HDF5_PLUGIN_PATH` environment variable,
+which the Conan run environment sets for you.
+The `hdf5_without_plugins` test runs the same binary with that path cleared,
+and checks what a writer and a reader report when a filter is missing.
+Only the filters that the tests use are built;
+`conanfile.txt` says which, and turns the rest off.
+
+A filter is loaded into the running program,
+so it has to reach the HDF5 it was built against.
+Against a shared HDF5 it links to the library like anything else.
+Against a static one it is built with its HDF5 symbols left undefined
+and looks them up in the program that loaded it,
+which is why the tests link `hdf5_plugins::hdf5_plugins`:
+the package puts `-rdynamic` on the executables that use it.
+The generated code is the same either way.
+Both are tested:
+
+```bash
+conan install . --build=missing -of build-shared -s compiler.cppstd=20 \
+    -o "hdf5/*:shared=True"
+cmake -S tests/cpp -B build-shared/cpp \
+    -DCMAKE_TOOLCHAIN_FILE="$PWD/build-shared/build/Release/generators/conan_toolchain.cmake" \
+    -DCMAKE_BUILD_TYPE=Release
+cmake --build build-shared/cpp
+ctest --test-dir build-shared/cpp --output-on-failure
 ```
 
 ## License

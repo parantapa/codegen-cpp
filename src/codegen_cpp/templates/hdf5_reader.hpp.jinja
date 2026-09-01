@@ -9,6 +9,16 @@
 
             const H5::DataSet array = group.openDataSet("{{ nd_array.name }}");
 {%- endmacro %}
+{%- macro check_filters() %}
+            {# An array stored through a filter that hdf5 loads at run time
+               cannot be read back without it. -#}
+            if (!array.getCreatePlist().allFiltersAvail()) [[unlikely]] {
+                throw std::runtime_error(
+                    "'" + path + "' is stored with a filter that is not "
+                    "available; hdf5 loads a filter from the directories "
+                    "in HDF5_PLUGIN_PATH");
+            }
+{%- endmacro %}
 {%- macro check_datatype(nd_array) %}
             const H5::DataType stored = array.getDataType();
             if (stored != {{ nd_array.type | hdf5_native_type }}) [[unlikely]] {
@@ -65,6 +75,7 @@
 {%- macro read_array(nd_array) %}
         {
 {{- open_array(nd_array) }}
+{{ check_filters() }}
 {{ check_datatype(nd_array) }}
 {{ check_shape() }}
 {{ read_into(nd_array) }}

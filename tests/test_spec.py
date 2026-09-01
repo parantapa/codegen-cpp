@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from codegen_cpp.spec import (
     NUMERIC_TYPES,
+    Compression,
     Dataset,
     FlatKey,
     Hdf5Reader,
@@ -870,6 +871,177 @@ def test_column_major_is_kept(tmp_path: Path) -> None:
     assert spec.datasets[0].column_major is True
 
 
+GOOD_DATASET = """
+[[dataset]]
+name = "d"
+dims = ["row", "col"]
+arrays = [{ name = "a", type = "f64" }]
+"""
+
+
+def test_hdf5_writer_stores_the_arrays_as_they_are_by_default(
+    tmp_path: Path,
+) -> None:
+    """A writer that says nothing about the layout asks for no filter."""
+    spec_file = write_spec(
+        tmp_path, GOOD_DATASET + '[[hdf5_writer]]\nname = "w"\ndataset = "d"\n'
+    )
+
+    writer = parse_spec(spec_file).hdf5_writers[0]
+
+    assert writer.chunk is None
+    assert writer.compression is Compression.none
+    assert writer.compression_level is None
+    assert writer.shuffle is False
+
+
+def test_hdf5_writer_compression_accepted(tmp_path: Path) -> None:
+    """A writer declares the chunk it stores and the filter it stores with."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_DATASET + "[[hdf5_writer]]\n"
+        'name = "w"\n'
+        'dataset = "d"\n'
+        "chunk = [64, 32]\n"
+        'compression = "zstd"\n'
+        "compression_level = 5\n"
+        "shuffle = true\n",
+    )
+
+    writer = parse_spec(spec_file).hdf5_writers[0]
+
+    assert writer.chunk == [64, 32]
+    assert writer.compression is Compression.zstd
+    assert writer.compression_level == 5
+    assert writer.shuffle is True
+
+
+def test_hdf5_writer_with_an_unknown_compression_rejected(tmp_path: Path) -> None:
+    """A filter that the generator cannot ask for is reported."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_DATASET + "[[hdf5_writer]]\n"
+        'name = "w"\n'
+        'dataset = "d"\n'
+        "chunk = [64, 32]\n"
+        'compression = "snappy"\n',
+    )
+
+    with pytest.raises(ValidationError, match="compression"):
+        parse_spec(spec_file)
+
+
+@pytest.mark.parametrize(
+    "line, message",
+    [
+        ('compression = "zstd"', "asks for compression 'zstd' but declares no chunk"),
+        ("shuffle = true", "asks for shuffle but declares no chunk"),
+    ],
+)
+def test_hdf5_writer_filter_without_a_chunk_rejected(
+    tmp_path: Path, line: str, message: str
+) -> None:
+    """A filter only applies to an array stored in chunks."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_DATASET + f'[[hdf5_writer]]\nname = "w"\ndataset = "d"\n{line}\n',
+    )
+
+    with pytest.raises(ValidationError, match=f"hdf5_writer 'w' {message}"):
+        parse_spec(spec_file)
+
+
+def test_hdf5_writer_with_an_empty_chunk_rejected(tmp_path: Path) -> None:
+    """A chunk without extents describes nothing."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_DATASET + '[[hdf5_writer]]\nname = "w"\ndataset = "d"\nchunk = []\n',
+    )
+
+    with pytest.raises(ValidationError, match="hdf5_writer 'w' has an empty chunk"):
+        parse_spec(spec_file)
+
+
+@pytest.mark.parametrize("extent", ["0", "-4"])
+def test_hdf5_writer_with_a_chunk_extent_below_one_rejected(
+    tmp_path: Path, extent: str
+) -> None:
+    """Every extent of a chunk holds at least one element."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_DATASET + "[[hdf5_writer]]\n"
+        'name = "w"\n'
+        'dataset = "d"\n'
+        f"chunk = [8, {extent}]\n",
+    )
+
+    with pytest.raises(
+        ValidationError, match="hdf5_writer 'w' has a chunk extent below one"
+    ):
+        parse_spec(spec_file)
+
+
+def test_hdf5_writer_with_a_chunk_of_the_wrong_rank_rejected(tmp_path: Path) -> None:
+    """A chunk has one extent per dim of the dataset it is stored in."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_DATASET + '[[hdf5_writer]]\nname = "w"\ndataset = "d"\nchunk = [8]\n',
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="hdf5_writer 'w' has a chunk of 1 extents, " "but dataset 'd' has 2 dims",
+    ):
+        parse_spec(spec_file)
+
+
+def test_hdf5_writer_level_for_a_filter_that_takes_none_rejected(
+    tmp_path: Path,
+) -> None:
+    """A level that the filter would ignore is reported rather than dropped."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_DATASET + "[[hdf5_writer]]\n"
+        'name = "w"\n'
+        'dataset = "d"\n'
+        "chunk = [8, 8]\n"
+        'compression = "lz4"\n'
+        "compression_level = 3\n",
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="hdf5_writer 'w' has a compression_level, " "which 'lz4' does not take",
+    ):
+        parse_spec(spec_file)
+
+
+@pytest.mark.parametrize(
+    "codec, level, low, high",
+    [("zstd", 0, 1, 22), ("zstd", 23, 1, 22), ("deflate", 10, 0, 9)],
+)
+def test_hdf5_writer_level_outside_the_range_rejected(
+    tmp_path: Path, codec: str, level: int, low: int, high: int
+) -> None:
+    """A level has to be one that the filter takes."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_DATASET + "[[hdf5_writer]]\n"
+        'name = "w"\n'
+        'dataset = "d"\n'
+        "chunk = [8, 8]\n"
+        f'compression = "{codec}"\n'
+        f"compression_level = {level}\n",
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=f"hdf5_writer 'w' has a compression_level of {level}, "
+        f"which is outside {low}..{high} for '{codec}'",
+    ):
+        parse_spec(spec_file)
+
+
 def test_parse_hdf5_writers() -> None:
     """The bundled n-dimensional array example parses its HDF5 writers."""
     spec = parse_spec(DATASET_EXAMPLE)
@@ -880,16 +1052,30 @@ def test_parse_hdf5_writers() -> None:
         "write_raster_mask",
         "write_raster_layers",
         "write_volume",
+        "write_series_chunked",
+        "write_raster_compressed",
+        "write_volume_compressed",
     ]
 
     writer = spec.hdf5_writers[0]
     assert writer.dataset == "Series"
     assert writer.include is None
     assert writer.exclude is None
+    assert writer.chunk is None
 
     # The lists mean the same thing for a writer as for a reader.
     assert spec.hdf5_writers[2].include == ["mask"]
     assert spec.hdf5_writers[3].exclude == ["mask"]
+
+    # A writer may say how the arrays it writes are laid out.
+    assert spec.hdf5_writers[5].chunk == [65536]
+    assert spec.hdf5_writers[5].compression is Compression.none
+
+    compressed = spec.hdf5_writers[7]
+    assert compressed.chunk == [64, 64, 64]
+    assert compressed.compression is Compression.zstd
+    assert compressed.compression_level == 5
+    assert compressed.shuffle is True
 
 
 def test_hdf5_classes_hold_the_readers_and_the_writers() -> None:
@@ -898,7 +1084,7 @@ def test_hdf5_classes_hold_the_readers_and_the_writers() -> None:
 
     assert [c.KIND for c in spec.hdf5_classes] == ["hdf5_reader"] * 5 + [
         "hdf5_writer"
-    ] * 5
+    ] * 8
 
 
 def test_selected_arrays_of_a_writer() -> None:

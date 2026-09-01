@@ -508,6 +508,28 @@ class DatasetClass(BaseModel):
     dataset: str
 
 
+class Compression(Enum):
+    """The filter that an HDF5 writer compresses its arrays with."""
+
+    none = "none"
+    deflate = "deflate"
+    zstd = "zstd"
+    lz4 = "lz4"
+    bzip2 = "bzip2"
+    lzf = "lzf"
+
+
+# The range of the levels that a filter takes,
+# for the filters that take one at all.
+# A filter that is not named here is asked for without a level,
+# and compresses the way the plugin holding it was built to.
+COMPRESSION_LEVELS = {
+    Compression.deflate: (0, 9),
+    Compression.zstd: (1, 22),
+    Compression.bzip2: (1, 9),
+}
+
+
 class Hdf5Class(DatasetClass):
     """The fields shared by every function over the arrays of an HDF5 group."""
 
@@ -551,6 +573,71 @@ class Hdf5Writer(Hdf5Class):
     """A function writing the arrays of a dataset into an HDF5 group."""
 
     KIND: ClassVar[str] = "hdf5_writer"
+
+    # How the arrays are laid out in the file.
+    # `chunk` is the shape of one chunk, one extent per dim of the dataset,
+    # and every extent of it is at least one.
+    # An extent that reaches past the array it is stored along
+    # is cut down to the array when the file is written,
+    # so one chunk fits a dataset of any size.
+    #
+    # `compression` names the filter the chunks are compressed with,
+    # `compression_level` tunes it where the filter takes a level,
+    # and `shuffle` puts the shuffle filter before the compressor,
+    # which usually pays for itself on an array of numbers.
+    # A filter only applies to an array stored in chunks,
+    # so any of the three asks for `chunk` as well.
+    chunk: list[int] | None = None
+    compression: Compression = Compression.none
+    compression_level: int | None = None
+    shuffle: bool = False
+
+    @model_validator(mode="after")
+    def check_chunk(self) -> "Hdf5Writer":
+        if self.chunk is not None:
+            if not self.chunk:
+                raise ValueError(f"{self.KIND} '{self.name}' has an empty chunk")
+
+            if any(extent < 1 for extent in self.chunk):
+                raise ValueError(
+                    f"{self.KIND} '{self.name}' has a chunk extent below one"
+                )
+            return self
+
+        asked: list[str] = []
+        if self.compression is not Compression.none:
+            asked.append(f"compression '{self.compression.value}'")
+        if self.shuffle:
+            asked.append("shuffle")
+
+        if asked:
+            raise ValueError(
+                f"{self.KIND} '{self.name}' asks for {' and '.join(asked)} "
+                f"but declares no chunk, and a filter only applies to "
+                f"an array stored in chunks"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def check_compression_level(self) -> "Hdf5Writer":
+        if self.compression_level is None:
+            return self
+
+        levels = COMPRESSION_LEVELS.get(self.compression)
+        if levels is None:
+            raise ValueError(
+                f"{self.KIND} '{self.name}' has a compression_level, "
+                f"which '{self.compression.value}' does not take"
+            )
+
+        low, high = levels
+        if not low <= self.compression_level <= high:
+            raise ValueError(
+                f"{self.KIND} '{self.name}' has a compression_level of "
+                f"{self.compression_level}, which is outside "
+                f"{low}..{high} for '{self.compression.value}'"
+            )
+        return self
 
 
 def selected_arrays(dataset: Dataset, hdf5_class: Hdf5Class) -> list[NdArray]:
@@ -792,6 +879,15 @@ class Spec(BaseModel):
                 errors.append(
                     f"{hdf5_class.KIND} '{hdf5_class.name}' selects no array "
                     f"of dataset '{dataset.name}'"
+                )
+
+            # A chunk has one extent per dim of the dataset it is stored in.
+            chunk = hdf5_class.chunk if isinstance(hdf5_class, Hdf5Writer) else None
+            if chunk is not None and len(chunk) != dataset.ndim:
+                errors.append(
+                    f"{hdf5_class.KIND} '{hdf5_class.name}' has a chunk of "
+                    f"{len(chunk)} extents, but dataset '{dataset.name}' "
+                    f"has {dataset.ndim} dims"
                 )
 
         if errors:

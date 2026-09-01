@@ -213,3 +213,54 @@ exclude = ["mask"]
 [[hdf5_writer]]
 name = "write_volume"
 dataset = "Volume"
+
+
+# A writer may also say how the arrays are laid out in the file.
+# `chunk` is the shape of one chunk, one extent per dim of the dataset,
+# and it turns the contiguous layout that a writer uses by default
+# into the chunked layout that a filter needs.
+# An extent that reaches past the array it is stored along
+# is cut down to the array when the file is written,
+# so one chunk fits a dataset of any size.
+[[hdf5_writer]]
+name = "write_series_chunked"
+dataset = "Series"
+chunk = [65536]
+
+# `compression` names the filter the chunks are compressed with:
+#
+#     none                       the default, which stores them as they are
+#     deflate                    zlib, which is built into HDF5 itself
+#     zstd  lz4  bzip2  lzf      filters that HDF5 loads at run time
+#
+# `compression_level` tunes the ones that take a level:
+# 0 to 9 for `deflate`, 1 to 22 for `zstd`, and 1 to 9 for `bzip2`.
+# A filter that is left without one compresses the way it was built to,
+# and `deflate` without one is asked for at level 6.
+#
+# `shuffle` puts the shuffle filter before the compressor,
+# which sorts the bytes of the elements by position
+# and usually pays for itself on an array of numbers.
+#
+# Every one of the three asks for `chunk` as well,
+# because a filter only applies to an array stored in chunks.
+[[hdf5_writer]]
+name = "write_raster_compressed"
+dataset = "Raster"
+chunk = [512, 512]
+compression = "deflate"
+compression_level = 6
+shuffle = true
+
+# Everything but `deflate` lives in a plugin that HDF5 loads at run time,
+# out of the directories that `HDF5_PLUGIN_PATH` names.
+# A writer looks for its filter before it writes anything through it,
+# and a reader looks for the filters of an array before it reads one,
+# so a plugin that is not there is reported rather than stumbled over.
+[[hdf5_writer]]
+name = "write_volume_compressed"
+dataset = "Volume"
+chunk = [64, 64, 64]
+compression = "zstd"
+compression_level = 5
+shuffle = true

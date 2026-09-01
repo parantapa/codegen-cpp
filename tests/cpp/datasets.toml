@@ -48,3 +48,44 @@ include = ["temperature"]
 [[hdf5_writer]]
 name = "write_field"
 dataset = "Field"
+
+# The same arrays stored in chunks, and through the filters over them.
+# A chunk on its own asks for no filter at all.
+[[hdf5_writer]]
+name = "write_grid_chunked"
+dataset = "Grid"
+chunk = [1, 2]
+
+# 'deflate' is built into hdf5 and needs no plugin.
+[[hdf5_writer]]
+name = "write_grid_deflate"
+dataset = "Grid"
+chunk = [1, 2]
+compression = "deflate"
+compression_level = 9
+shuffle = true
+
+# 'zstd' is a filter that hdf5 loads at run time,
+# and this chunk reaches past the array, so it is cut down to it.
+[[hdf5_writer]]
+name = "write_grid_zstd"
+dataset = "Grid"
+chunk = [64, 64]
+compression = "zstd"
+compression_level = 5
+shuffle = true
+
+# 'lz4' takes no level of its own.
+[[hdf5_writer]]
+name = "write_grid_lz4"
+dataset = "Grid"
+chunk = [2, 2]
+compression = "lz4"
+
+# A column major dataset is gathered before it is compressed.
+[[hdf5_writer]]
+name = "write_field_zstd"
+dataset = "Field"
+chunk = [1, 3, 4]
+compression = "zstd"
+shuffle = true
