@@ -1,3 +1,14 @@
+{#- One value appended to the builder that holds it,
+    indented by the width its continuation line needs. -#}
+{%- macro append_value(node, expr, indent) -%}
+{%- if node.kind == "scalar" -%}
+check(builder_{{ node.var }}_->Append({{ expr }}),
+{{ indent }}      "failed to write '{{ node.key }}'");
+{%- else -%}
+append_{{ node.var }}({{ expr }});
+{%- endif -%}
+{%- endmacro %}
+
 // Writes '{{ table.name }}' tables to a Parquet file,
 // one batch of rows at a time.
 class {{ parquet_writer.name }} {
@@ -18,8 +29,8 @@ class {{ parquet_writer.name }} {
         }
 
         schema_ = arrow::schema({
-{%- for column in table.columns %}
-            arrow::field("{{ column.name }}", {{ column.type | arrow_type }}),
+{%- for column in columns %}
+            arrow::field("{{ column.member }}", {{ column.arrow }}),
 {%- endfor %}
         });
 
@@ -50,19 +61,28 @@ class {{ parquet_writer.name }} {
         if (writer_ == nullptr) [[unlikely]] {
             throw std::runtime_error("'" + parquet_file_ + "' is closed");
         }
-{% for column in table.columns %}
-        {{ column.type | arrow_builder_type }} builder_{{ column.name }};
-        check(builder_{{ column.name }}.AppendValues(table.{{ column.name }}),
-              "failed to write column '{{ column.name }}'");
-        std::shared_ptr<arrow::Array> column_{{ column.name }};
-        check(builder_{{ column.name }}.Finish(&column_{{ column.name }}),
-              "failed to write column '{{ column.name }}'");
-{% endfor %}
+{% for column in columns %}
+{%- if column.kind == "scalar" %}
+        {{ column.builder_type }} builder_{{ column.member }};
+        check(builder_{{ column.member }}.AppendValues(table.{{ column.member }}),
+              "failed to write column '{{ column.member }}'");
+        std::shared_ptr<arrow::Array> column_{{ column.member }};
+        check(builder_{{ column.member }}.Finish(&column_{{ column.member }}),
+              "failed to write column '{{ column.member }}'");
+{% else %}
+        for (const auto& value : table.{{ column.member }}) {
+            append_{{ column.var }}(value);
+        }
+        std::shared_ptr<arrow::Array> column_{{ column.member }};
+        check(builder_{{ column.var }}_->Finish(&column_{{ column.member }}),
+              "failed to write column '{{ column.member }}'");
+{% endif %}
+{%- endfor %}
         const auto batch = arrow::RecordBatch::Make(
             schema_, static_cast<std::int64_t>(table.size()),
             {
-{%- for column in table.columns %}
-                column_{{ column.name }},
+{%- for column in columns %}
+                column_{{ column.member }},
 {%- endfor %}
             });
 
@@ -98,7 +118,37 @@ class {{ parquet_writer.name }} {
             throw std::runtime_error(what + ": " + status.ToString());
         }
     }
-
+{% for node in builders %}
+{%- if node.kind == "vector" %}
+    {# Append one '{{ node.cpp }}' to the LIST that '{{ node.key }}' is stored as. -#}
+    void append_{{ node.var }}(const {{ node.cpp }}& value) {
+        check(builder_{{ node.var }}_->Append(),
+              "failed to write '{{ node.key }}'");
+        for (const auto& element : value) {
+            {{ append_value(node.element, "element", " " * 12) }}
+        }
+    }
+{% elif node.kind == "map" %}
+    {# Append one '{{ node.cpp }}' to the MAP that '{{ node.key }}' is stored as. -#}
+    void append_{{ node.var }}(const {{ node.cpp }}& value) {
+        check(builder_{{ node.var }}_->Append(),
+              "failed to write '{{ node.key }}'");
+        for (const auto& [key, item] : value) {
+            {{ append_value(node.key_node, "key", " " * 12) }}
+            {{ append_value(node.value, "item", " " * 12) }}
+        }
+    }
+{% elif node.kind == "struct" %}
+    {# Append one '{{ node.cpp }}' to the group that '{{ node.key }}' is stored as. -#}
+    void append_{{ node.var }}(const {{ node.cpp }}& value) {
+        check(builder_{{ node.var }}_->Append(),
+              "failed to write '{{ node.key }}'");
+{%- for field in node.fields %}
+        {{ append_value(field, "value." ~ field.member, " " * 8) }}
+{%- endfor %}
+    }
+{% endif %}
+{%- endfor %}
     std::string parquet_file_;
     std::shared_ptr<arrow::Schema> schema_;
 
@@ -106,4 +156,36 @@ class {{ parquet_writer.name }} {
        so it is declared first and destroyed last. -#}
     std::shared_ptr<arrow::io::OutputStream> output_;
     std::unique_ptr<parquet::arrow::FileWriter> writer_;
+{%- if builders %}
+
+    {# The builders of the columns that hold an aggregate type.
+       Each of them is handed the builders of the parts below it,
+       so they are declared from the deepest part up. -#}
+{%- for node in builders %}
+{%- if node.kind == "scalar" %}
+    std::shared_ptr<{{ node.builder_type }}> builder_{{ node.var }}_ =
+        std::make_shared<{{ node.builder_type }}>(arrow::default_memory_pool());
+{%- elif node.kind == "vector" %}
+    std::shared_ptr<arrow::ListBuilder> builder_{{ node.var }}_ =
+        std::make_shared<arrow::ListBuilder>(arrow::default_memory_pool(),
+                                             builder_{{ node.element.var }}_,
+                                             {{ node.arrow }});
+{%- elif node.kind == "map" %}
+    std::shared_ptr<arrow::MapBuilder> builder_{{ node.var }}_ =
+        std::make_shared<arrow::MapBuilder>(arrow::default_memory_pool(),
+                                            builder_{{ node.key_node.var }}_,
+                                            builder_{{ node.value.var }}_,
+                                            {{ node.arrow }});
+{%- elif node.kind == "struct" %}
+    std::shared_ptr<arrow::StructBuilder> builder_{{ node.var }}_ =
+        std::make_shared<arrow::StructBuilder>(
+            {{ node.arrow }}, arrow::default_memory_pool(),
+            std::vector<std::shared_ptr<arrow::ArrayBuilder>>{
+{%- for field in node.fields %}
+                builder_{{ field.var }}_{% if not loop.last %},{% endif %}
+{%- endfor %}
+            });
+{%- endif %}
+{%- endfor %}
+{%- endif %}
 };

@@ -9,8 +9,11 @@ from codegen_cpp.cli import cli
 from codegen_cpp.codegen import (
     CSV_READER_INCLUDES,
     CSV_WRITER_INCLUDES,
+    aggregate_includes,
+    arrow_type_expression,
     header_file,
     hdf5_includes,
+    render_aggregate,
     render_csv_reader,
     render_csv_writer,
     render_dataset,
@@ -28,11 +31,15 @@ from codegen_cpp.spec import (
     Dataset,
     Hdf5Reader,
     Hdf5Writer,
+    Map,
     NdArray,
     ParquetReader,
     ParquetWriter,
     ScalarType,
+    Struct,
+    StructField,
     Table,
+    Vector,
 )
 
 EXAMPLE = Path(__file__).parent.parent / "examples" / "table1.toml"
@@ -957,3 +964,224 @@ def test_the_hint_is_not_put_on_branches_that_do_more() -> None:
     assert "if (batch_ == nullptr) {" in header
     assert 'if (path.ends_with(".gz")) {' in header
     assert "if (done_) {" in header
+
+
+AGGREGATES_EXAMPLE = Path(__file__).parent.parent / "examples" / "table2.toml"
+
+NESTED_TYPES = {
+    "Tags": Vector(name="Tags", element=ScalarType.str),
+    "Counts": Map(name="Counts", key=ScalarType.str, value=ScalarType.i64),
+    "Spot": Struct(
+        name="Spot",
+        fields=[
+            StructField(name="x", type=ScalarType.i32),
+            StructField(name="tags", type="Tags"),
+        ],
+    ),
+}
+
+NESTED_TABLE = Table(
+    name="Row",
+    columns=[
+        Column(name="id", type=ScalarType.u32),
+        Column(name="tags", type="Tags"),
+        Column(name="counts", type="Counts"),
+        Column(name="spot", type="Spot"),
+    ],
+)
+
+NESTED_READER = ParquetReader(
+    name="RowParquetReader",
+    table="Row",
+    default={"tags.element": "n/a"},
+    name_in_file={"spot.x": "across"},
+)
+
+NESTED_WRITER = ParquetWriter(name="RowParquetWriter", table="Row")
+
+
+def test_render_aggregate_types() -> None:
+    """Each aggregate type is written under the name that declares it."""
+    assert "using Tags = std::vector<std::string>;" in render_aggregate(
+        NESTED_TYPES["Tags"]
+    )
+    assert "using Counts = std::map<std::string, std::int64_t>;" in render_aggregate(
+        NESTED_TYPES["Counts"]
+    )
+
+    struct = render_aggregate(NESTED_TYPES["Spot"])
+    assert "struct Spot {" in struct
+    assert "    std::int32_t x;" in struct
+    assert "    Tags tags;" in struct
+    assert "    bool operator==(const Spot&) const = default;" in struct
+
+
+def test_render_an_unordered_map() -> None:
+    """is_unordered picks the container, and nothing else."""
+    unordered = Map(
+        name="Counts", key=ScalarType.str, value=ScalarType.i64, is_unordered=True
+    )
+
+    assert (
+        "using Counts = std::unordered_map<std::string, std::int64_t>;"
+        in render_aggregate(unordered)
+    )
+
+
+def test_arrow_type_expression() -> None:
+    """An aggregate type is stored as the Parquet shape it declares."""
+    assert arrow_type_expression(ScalarType.i32, {}) == "arrow::int32()"
+    assert (
+        arrow_type_expression("Tags", NESTED_TYPES)
+        == 'arrow::list(arrow::field("element", arrow::utf8()))'
+    )
+    assert (
+        arrow_type_expression("Counts", NESTED_TYPES)
+        == 'arrow::map(arrow::utf8(), arrow::field("value", arrow::int64()))'
+    )
+    assert arrow_type_expression("Spot", NESTED_TYPES) == (
+        'arrow::struct_({arrow::field("x", arrow::int32()), '
+        'arrow::field("tags", arrow::list(arrow::field("element", arrow::utf8())))})'
+    )
+
+
+def test_aggregate_includes() -> None:
+    """A map asks for the header of the container that holds its pairs."""
+    assert "vector" in aggregate_includes(NESTED_TYPES["Tags"]).std
+    assert "map" in aggregate_includes(NESTED_TYPES["Counts"]).std
+    assert "unordered_map" not in aggregate_includes(NESTED_TYPES["Counts"]).std
+
+    unordered = Map(
+        name="Counts", key=ScalarType.str, value=ScalarType.i64, is_unordered=True
+    )
+    assert "unordered_map" in aggregate_includes(unordered).std
+
+
+def test_generate_declares_a_type_before_the_tables_that_hold_it(
+    tmp_path: Path,
+) -> None:
+    """A definition only ever names what an earlier definition declared."""
+    header = generate_into(tmp_path, AGGREGATES_EXAMPLE)
+
+    for declaration in (
+        "using Keywords = std::vector<std::string>;",
+        "using Ids = std::map<std::string, std::string>;",
+        "using CitationsByYear = std::unordered_map<std::int64_t, std::uint32_t>;",
+        "struct Biblio {",
+        "using Topics = std::vector<TopicScore>;",
+    ):
+        assert header.count(declaration) == 1, declaration
+
+    assert header.index("struct TopicScore {") < header.index("using Topics =")
+    assert header.index("using Topics =") < header.index("struct Work {")
+    assert header.index("struct Work {") < header.index("class WorkParquetReader {")
+
+    # The containers the types are held in are included once.
+    assert header.count("#include <map>") == 1
+    assert header.count("#include <unordered_map>") == 1
+
+
+def test_render_parquet_reader_reads_a_nested_column() -> None:
+    """A column of an aggregate type is read level by level."""
+    header = render_parquet_reader(NESTED_READER, NESTED_TABLE, NESTED_TYPES)
+
+    # A nested column is stored as several leaves, so the leaves are projected.
+    assert "std::vector<int> leaf_columns(" in header
+    assert "const std::vector<int> columns = leaf_columns({" in header
+    assert "field_index(*schema," not in header
+
+    # Every part of the table is pointed at the array holding it.
+    assert 'bind_tags(*batch.column(1), "tags");' in header
+    assert "array_tags_ = as_list(source, where);" in header
+    assert "array_counts_ = as_map(source, where);" in header
+    assert "const arrow::StructArray& array = *as_struct(source, where);" in header
+
+    # A field is looked for under the name the file gives it.
+    assert 'bind_spot_x(*field_of(array, "across", where),' in header
+    assert 'bind_spot_tags(*field_of(array, "tags", where),' in header
+
+    # The value of a row is read out of those arrays.
+    assert "Tags read_tags(std::int64_t i) const {" in header
+    assert "Counts read_counts(std::int64_t i) const {" in header
+    assert "Spot read_spot(std::int64_t i) const {" in header
+    assert "            .x = array_spot_x_->Value(i)," in header
+    assert "            .tags = read_spot_tags(i)," in header
+    assert (
+        "                read_tags(i),\n                read_counts(i),\n"
+        "                read_spot(i));" in header
+    )
+
+
+def test_render_parquet_reader_null_handling_of_a_nested_column() -> None:
+    """A part that has no default is a part that holds no null."""
+    header = render_parquet_reader(NESTED_READER, NESTED_TABLE, NESTED_TYPES)
+
+    # 'tags.element' has a default, and the parts around it do not.
+    assert (
+        'array_tags_element_->IsNull(j) ? std::string("n/a") '
+        ": array_tags_element_->GetString(j)" in header
+    )
+    assert "if (array_spot_x_->null_count() != 0) [[unlikely]] {" in header
+    assert "if (array_tags_element_->null_count() != 0)" not in header
+
+    # An aggregate takes no default; a null one is read as the empty value.
+    assert "        if (array_tags_->IsNull(i)) {\n            return value;" in header
+
+
+def test_render_parquet_reader_names_a_column_in_the_file() -> None:
+    """A reader looks for the name the file gives a column."""
+    reader = ParquetReader(
+        name="PointParquetReader", table="Point", name_in_file={"id": "ident"}
+    )
+
+    header = render_parquet_reader(reader, TABLE)
+
+    assert 'field_index(*schema, "ident", arrow::uint32()),' in header
+    assert 'if (schema.field(0)->name() != "ident") [[unlikely]] {' in header
+    assert "column_id->Value(i)," in header
+
+
+def test_render_parquet_writer_builds_a_nested_column() -> None:
+    """A column of an aggregate type is built level by level."""
+    header = render_parquet_writer(NESTED_WRITER, NESTED_TABLE, NESTED_TYPES)
+
+    assert (
+        'arrow::field("tags", arrow::list(arrow::field("element", arrow::utf8()))),'
+        in header
+    )
+
+    # The builders below a column are handed to the builder of the column.
+    assert "std::shared_ptr<arrow::StringBuilder> builder_tags_element_ =" in header
+    assert "std::shared_ptr<arrow::ListBuilder> builder_tags_ =" in header
+    assert (
+        "                                             builder_tags_element_," in header
+    )
+    assert "std::shared_ptr<arrow::MapBuilder> builder_counts_ =" in header
+    assert "std::shared_ptr<arrow::StructBuilder> builder_spot_ =" in header
+
+    # One row at a time is appended to them, and the batch is finished at once.
+    assert "        for (const auto& value : table.tags) {\n" in header
+    assert "            append_tags(value);" in header
+    assert "    void append_tags(const Tags& value) {" in header
+    assert "        for (const auto& [key, item] : value) {" in header
+    assert "        append_spot_tags(value.tags);" in header
+    assert "check(builder_tags_->Finish(&column_tags)," in header
+
+    # A scalar column is still built by a builder of the batch it is written in.
+    assert "arrow::UInt32Builder builder_id;" in header
+
+
+def test_generate_defines_every_class_over_a_nested_table(tmp_path: Path) -> None:
+    """The example of the aggregate types generates all of its classes."""
+    header = generate_into(tmp_path, AGGREGATES_EXAMPLE)
+
+    for declaration in (
+        "class WorkParquetReader {",
+        "class WorkSummaryParquetReader {",
+        "class WorkParquetWriter {",
+        "class WorkSummaryCsvWriter {",
+    ):
+        assert header.count(declaration) == 1, declaration
+
+    # A reader of a nested table reaches for the schema of the Parquet file.
+    assert "#include <parquet/schema.h>" in header

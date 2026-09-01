@@ -1,15 +1,25 @@
-{%- set required = table | required_columns(parquet_reader) %}
-{%- macro column_value(column) -%}
-{%- set array = "column_" ~ column.name -%}
-{%- if column.type.value == "str" -%}
-{%- set read = array ~ "->GetString(i)" -%}
+{%- set required = columns | selectattr("default", "none") | list %}
+{%- set aggregates = nodes | rejectattr("kind", "eq", "scalar") | list %}
+{#- The value of one scalar part of a table,
+    read out of the array that holds it at index. -#}
+{%- macro scalar_value(node, array, index) -%}
+{%- if node.is_string -%}
+{%- set read = array ~ "->GetString(" ~ index ~ ")" -%}
 {%- else -%}
-{%- set read = array ~ "->Value(i)" -%}
+{%- set read = array ~ "->Value(" ~ index ~ ")" -%}
 {%- endif -%}
-{%- if column in required -%}
+{%- if node.default is none -%}
 {{ read }}
 {%- else -%}
-{{ array }}->IsNull(i) ? {{ parquet_reader.default_values[column.name] | cpp_literal(column.type) }} : {{ read }}
+{{ array }}->IsNull({{ index }}) ? {{ node.default }} : {{ read }}
+{%- endif -%}
+{%- endmacro %}
+{#- The value of one part of a table, whatever kind of part it is. -#}
+{%- macro node_value(node, index) -%}
+{%- if node.kind == "scalar" -%}
+{{ scalar_value(node, "array_" ~ node.var ~ "_", index) }}
+{%- else -%}
+read_{{ node.var }}({{ index }})
 {%- endif -%}
 {%- endmacro %}
 
@@ -48,7 +58,7 @@ class {{ parquet_reader.name }} {
         reader_ = unwrap(builder.memory_pool(arrow::default_memory_pool())->Build(),
                          "failed to open '" + parquet_file_ + "'");
         reader_->set_batch_size(static_cast<std::int64_t>(batch_size_));
-
+{% if not nested %}
         std::shared_ptr<arrow::Schema> schema;
         check(reader_->GetSchema(&schema),
               "failed to read the schema of '" + parquet_file_ + "'");
@@ -56,10 +66,21 @@ class {{ parquet_reader.name }} {
         {# Read only the columns of the table, in the order
            in which they are declared. -#}
         const std::vector<int> columns = {
-{%- for column in table.columns %}
-            field_index(*schema, "{{ column.name }}", {{ column.type | arrow_type }}),
+{%- for column in columns %}
+            field_index(*schema, "{{ column.name_in_file }}", {{ column.arrow }}),
 {%- endfor %}
         };
+{%- else %}
+        {# Read only the columns of the table, in the order
+           in which they are declared.
+           A column that holds an aggregate type is stored as several leaves,
+           and every one of them is read. -#}
+        const std::vector<int> columns = leaf_columns({
+{%- for column in columns %}
+            "{{ column.name_in_file }}",
+{%- endfor %}
+        });
+{%- endif %}
 
         std::vector<int> row_groups(
             static_cast<std::size_t>(reader_->num_row_groups()));
@@ -120,7 +141,7 @@ class {{ parquet_reader.name }} {
             throw std::runtime_error(what + ": " + status.ToString());
         }
     }
-
+{% if not nested %}
     {# Return the position of the column called name in schema,
        and throw unless it is stored with the expected type. -#}
     int field_index(const arrow::Schema& schema, const std::string& name,
@@ -139,22 +160,200 @@ class {{ parquet_reader.name }} {
         }
         return index;
     }
+{% else %}
+    {# Return the leaf columns of the Parquet file that sit under the columns
+       called names, in the order in which the names are given.
+       A leaf is what a Parquet file is read by,
+       so a column of an aggregate type is named by all of its leaves. -#}
+    std::vector<int> leaf_columns(const std::vector<std::string>& names) const {
+        const auto* schema = reader_->parquet_reader()->metadata()->schema();
 
+        std::vector<int> leaves;
+        for (const auto& name : names) {
+            const std::size_t found = leaves.size();
+            for (int i = 0; i < schema->num_columns(); ++i) {
+                if (schema->GetColumnRoot(i)->name() == name) {
+                    leaves.push_back(i);
+                }
+            }
+            if (leaves.size() == found) [[unlikely]] {
+                throw std::runtime_error("'" + parquet_file_ +
+                                         "' has no column '" + name + "'");
+            }
+        }
+        return leaves;
+    }
+
+    {# Return source as the array of the expected type,
+       and throw unless that is what it holds. -#}
+    template <typename ArrayType>
+    const ArrayType* as_array(const arrow::Array& source,
+                              const std::shared_ptr<arrow::DataType>& type,
+                              const std::string& where) const {
+        if (!source.type()->Equals(*type)) [[unlikely]] {
+            throw std::runtime_error(
+                "'" + where + "' of '" + parquet_file_ + "' has type " +
+                source.type()->ToString() + " instead of " + type->ToString());
+        }
+        return static_cast<const ArrayType*>(&source);
+    }
+{% if aggregates | selectattr("kind", "eq", "vector") | list %}
+    {# Return source as the LIST that a vector is stored as. -#}
+    const arrow::ListArray* as_list(const arrow::Array& source,
+                                    const std::string& where) const {
+        if (source.type_id() != arrow::Type::LIST) [[unlikely]] {
+            throw std::runtime_error("'" + where + "' of '" + parquet_file_ +
+                                     "' is not stored as a LIST");
+        }
+        return static_cast<const arrow::ListArray*>(&source);
+    }
+{% endif %}
+{%- if aggregates | selectattr("kind", "eq", "map") | list %}
+    {# Return source as the MAP that a map is stored as. -#}
+    const arrow::MapArray* as_map(const arrow::Array& source,
+                                  const std::string& where) const {
+        if (source.type_id() != arrow::Type::MAP) [[unlikely]] {
+            throw std::runtime_error("'" + where + "' of '" + parquet_file_ +
+                                     "' is not stored as a MAP");
+        }
+        return static_cast<const arrow::MapArray*>(&source);
+    }
+{% endif %}
+{%- if aggregates | selectattr("kind", "eq", "struct") | list %}
+    {# Return source as the group that a struct is stored as. -#}
+    const arrow::StructArray* as_struct(const arrow::Array& source,
+                                        const std::string& where) const {
+        if (source.type_id() != arrow::Type::STRUCT) [[unlikely]] {
+            throw std::runtime_error("'" + where + "' of '" + parquet_file_ +
+                                     "' is not stored as a group");
+        }
+        return static_cast<const arrow::StructArray*>(&source);
+    }
+
+    {# Return the child of array that the file calls name.
+       The array owns the child it hands out,
+       so the child outlives the pointer that is kept to it. -#}
+    std::shared_ptr<arrow::Array> field_of(const arrow::StructArray& array,
+                                           const std::string& name,
+                                           const std::string& where) const {
+        auto child = array.GetFieldByName(name);
+        if (child == nullptr) [[unlikely]] {
+            throw std::runtime_error("'" + where + "' of '" + parquet_file_ +
+                                     "' has no '" + name + "'");
+        }
+        return child;
+    }
+{% endif %}
+{%- endif %}
     {# Throw unless the batches hold the columns of the table,
        in the order in which they are declared. -#}
     void check_schema(const arrow::Schema& schema) const {
-        if (schema.num_fields() != {{ table.columns | length }}) [[unlikely]] {
+        if (schema.num_fields() != {{ columns | length }}) [[unlikely]] {
             throw std::runtime_error("'" + parquet_file_ +
                                      "' is read with unexpected columns");
         }
-{%- for column in table.columns %}
-        if (schema.field({{ loop.index0 }})->name() != "{{ column.name }}") [[unlikely]] {
+{%- for column in columns %}
+        if (schema.field({{ loop.index0 }})->name() != "{{ column.name_in_file }}") [[unlikely]] {
             throw std::runtime_error("'" + parquet_file_ +
                                      "' is read with unexpected columns");
         }
 {%- endfor %}
     }
+{% if nested %}
+    {# Point every part of the table at the array of the batch holding it.
+       The arrays below a column belong to the column,
+       so they live as long as the batch that is bound here. -#}
+    void bind_columns(const arrow::RecordBatch& batch) {
+{%- for column in columns %}
+        bind_{{ column.var }}(*batch.column({{ loop.index0 }}), "{{ column.key }}");
+{%- endfor %}
+    }
+{% for node in nodes %}
+{%- if node.kind == "scalar" %}
+    void bind_{{ node.var }}(const arrow::Array& source, const std::string& where) {
+        array_{{ node.var }}_ =
+            as_array<{{ node.array_type }}>(source, {{ node.arrow }}, where);
+{%- if node.default is none %}
+        if (array_{{ node.var }}_->null_count() != 0) [[unlikely]] {
+            throw std::runtime_error("'" + where + "' of '" + parquet_file_ +
+                                     "' contains null values");
+        }
+{%- endif %}
+    }
+{% elif node.kind == "vector" %}
+    void bind_{{ node.var }}(const arrow::Array& source, const std::string& where) {
+        array_{{ node.var }}_ = as_list(source, where);
+        bind_{{ node.element.var }}(*array_{{ node.var }}_->values(),
+{{ " " * (node.element.var | length + 14) }}where + ".{{ node.element.step }}");
+    }
 
+    {# Read the vector stored in '{{ node.key }}' at row i,
+       which is empty where the file holds a null. -#}
+    {{ node.cpp }} read_{{ node.var }}(std::int64_t i) const {
+        {{ node.cpp }} value;
+        if (array_{{ node.var }}_->IsNull(i)) {
+            return value;
+        }
+
+        const std::int64_t begin = array_{{ node.var }}_->value_offset(i);
+        const std::int64_t end = array_{{ node.var }}_->value_offset(i + 1);
+        value.reserve(static_cast<std::size_t>(end - begin));
+        for (std::int64_t j = begin; j < end; ++j) {
+            value.push_back({{ node_value(node.element, "j") }});
+        }
+        return value;
+    }
+{% elif node.kind == "map" %}
+    void bind_{{ node.var }}(const arrow::Array& source, const std::string& where) {
+        array_{{ node.var }}_ = as_map(source, where);
+        bind_{{ node.key_node.var }}(*array_{{ node.var }}_->keys(),
+{{ " " * (node.key_node.var | length + 14) }}where + ".{{ node.key_node.step }}");
+        bind_{{ node.value.var }}(*array_{{ node.var }}_->items(),
+{{ " " * (node.value.var | length + 14) }}where + ".{{ node.value.step }}");
+    }
+
+    {# Read the map stored in '{{ node.key }}' at row i,
+       which is empty where the file holds a null. -#}
+    {{ node.cpp }} read_{{ node.var }}(std::int64_t i) const {
+        {{ node.cpp }} value;
+        if (array_{{ node.var }}_->IsNull(i)) {
+            return value;
+        }
+
+        const std::int64_t begin = array_{{ node.var }}_->value_offset(i);
+        const std::int64_t end = array_{{ node.var }}_->value_offset(i + 1);
+        for (std::int64_t j = begin; j < end; ++j) {
+            const auto inserted = value.emplace({{ node_value(node.key_node, "j") }},
+                                                {{ node_value(node.value, "j") }});
+            if (!inserted.second) [[unlikely]] {
+                throw std::runtime_error("'{{ node.key }}' of '" + parquet_file_ +
+                                         "' holds one key twice");
+            }
+        }
+        return value;
+    }
+{% elif node.kind == "struct" %}
+    void bind_{{ node.var }}(const arrow::Array& source, const std::string& where) {
+        const arrow::StructArray& array = *as_struct(source, where);
+{%- for field in node.fields %}
+        bind_{{ field.var }}(*field_of(array, "{{ field.name_in_file }}", where),
+{{ " " * (field.var | length + 14) }}where + ".{{ field.step }}");
+{%- endfor %}
+    }
+
+    {# Read the struct stored in '{{ node.key }}' at row i.
+       A null is read as the fields of the struct read one by one,
+       so each of them stands in for it with its own default. -#}
+    {{ node.cpp }} read_{{ node.var }}(std::int64_t i) const {
+        return {{ node.cpp }}{
+{%- for field in node.fields %}
+            .{{ field.member }} = {{ node_value(field, "i") }},
+{%- endfor %}
+        };
+    }
+{% endif %}
+{%- endfor %}
+{%- endif %}
     {# Make batch_ point at a batch with at least one unread row,
        or at nullptr once the Parquet file has been read completely. -#}
     void fill_batch() {
@@ -173,8 +372,11 @@ class {{ parquet_reader.name }} {
                 batch_ = nullptr;
                 return;
             }
-
+{% if nested %}
+            bind_columns(*batch);
+{%- else %}
             check_nulls(*batch);
+{%- endif %}
             batch_ = std::move(batch);
             offset_ = 0;
         }
@@ -185,30 +387,36 @@ class {{ parquet_reader.name }} {
     std::int64_t append_rows({{ table.name }}& table, std::int64_t wanted) {
         const std::int64_t available = batch_->num_rows() - offset_;
         const std::int64_t rows = std::min(available, wanted);
-{%- for column in table.columns %}
-        const auto* column_{{ column.name }} =
-            static_cast<const {{ column.type | arrow_array_type }}*>(
+{%- if not nested %}
+{%- for column in columns %}
+        const auto* column_{{ column.member }} =
+            static_cast<const {{ column.array_type }}*>(
                 batch_->column({{ loop.index0 }}).get());
 {%- endfor %}
+{%- endif %}
 
         for (std::int64_t i = offset_; i < offset_ + rows; ++i) {
             table.push_back(
-{%- for column in table.columns %}
-                {{ column_value(column) }}{% if not loop.last %},{% endif %}
+{%- for column in columns %}
+{%- if nested %}
+                {{ node_value(column, "i") }}{% if not loop.last %},{% endif %}
+{%- else %}
+                {{ scalar_value(column, "column_" ~ column.member, "i") }}{% if not loop.last %},{% endif %}
+{%- endif %}
 {%- endfor %});
         }
 
         offset_ += rows;
         return rows;
     }
-
+{% if not nested %}
     {# Throw if a column that is not nullable contains a null value. -#}
     void check_nulls(
 {%- if required %}const arrow::RecordBatch& batch) const {
-{%- for column in table.columns %}
-{%- if column in required %}
+{%- for column in columns %}
+{%- if column.default is none %}
         if (batch.column({{ loop.index0 }})->null_count() != 0) [[unlikely]] {
-            throw std::runtime_error("column '{{ column.name }}' of '" +
+            throw std::runtime_error("column '{{ column.member }}' of '" +
                                      parquet_file_ + "' contains null values");
         }
 {%- endif %}
@@ -216,7 +424,7 @@ class {{ parquet_reader.name }} {
 {%- else %}[[maybe_unused]] const arrow::RecordBatch& batch) const {
 {%- endif %}
     }
-
+{% endif %}
     std::string parquet_file_;
     std::size_t batch_size_;
     {# The file reader has to outlive the record batch reader it returns,
@@ -230,4 +438,18 @@ class {{ parquet_reader.name }} {
 
     {# Set once the record batch reader has returned its last batch. -#}
     bool done_ = false;
+{%- if nested %}
+
+    {# The arrays of the batch being read,
+       one per part of the table that holds a value of its own. -#}
+{%- for node in nodes %}
+{%- if node.kind == "scalar" %}
+    const {{ node.array_type }}* array_{{ node.var }}_ = nullptr;
+{%- elif node.kind == "vector" %}
+    const arrow::ListArray* array_{{ node.var }}_ = nullptr;
+{%- elif node.kind == "map" %}
+    const arrow::MapArray* array_{{ node.var }}_ = nullptr;
+{%- endif %}
+{%- endfor %}
+{%- endif %}
 };

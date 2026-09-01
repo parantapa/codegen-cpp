@@ -242,6 +242,31 @@ def find_type_cycles(aggregates: dict[str, Aggregate]) -> list[list[str]]:
     return list(cycles.values())
 
 
+def sorted_aggregates(aggregates: dict[str, Aggregate]) -> list[Aggregate]:
+    """
+    Return the aggregate types in an order that declares each of them
+    before the types that name it.
+
+    The declared types have to be acyclic, or this does not terminate;
+    `find_type_cycles` reports the ones that are not.
+    """
+    ordered: dict[str, Aggregate] = {}
+
+    def visit(name: str) -> None:
+        if name in ordered:
+            return
+
+        for referenced in referenced_types(aggregates[name]):
+            if referenced in aggregates:
+                visit(referenced)
+        ordered[name] = aggregates[name]
+
+    for name in aggregates:
+        visit(name)
+
+    return list(ordered.values())
+
+
 # The steps a key takes through the levels Parquet does not name after a field.
 # They are the names Parquet gives those levels itself,
 # in the `element` child of a LIST and the `value` child of a MAP.

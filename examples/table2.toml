@@ -2,10 +2,6 @@
 # vectors, maps and structs,
 # built out of the scalar types and out of one another.
 #
-# NOTE: this feature is not implemented yet.
-# The file is the design of it, written as the tutorial it will become,
-# so `codegen-cpp generate examples/table2.toml` does not accept it today.
-#
 # See `examples/table1.toml` for the tables, readers and writers
 # that this specification builds on;
 # everything shown there holds here as well.

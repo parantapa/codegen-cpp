@@ -1,0 +1,126 @@
+# The aggregate types read and written
+# by the C++ integration test 'test_nested'.
+
+[[vector]]
+name = "Tags"
+element = "str"
+
+[[vector]]
+name = "Nums"
+element = "i32"
+
+[[struct]]
+name = "Point"
+fields = [{ name = "x", type = "i32" }, { name = "y", type = "f64" }]
+
+[[vector]]
+name = "Points"
+element = "Point"
+
+[[map]]
+name = "Counts"
+key = "str"
+value = "i64"
+
+[[map]]
+name = "Fast"
+key = "i64"
+value = "u32"
+is_unordered = true
+
+[[vector]]
+name = "Nested"
+element = "Tags"
+
+[[struct]]
+name = "Inner"
+fields = [{ name = "nums", type = "Nums" }, { name = "label", type = "str" }]
+
+# One column per shape a Parquet group can have,
+# and one per way of stacking them.
+[[table]]
+name = "T"
+columns = [
+    { name = "id", type = "i64" },
+    { name = "tags", type = "Tags" },
+    { name = "points", type = "Points" },
+    { name = "counts", type = "Counts" },
+    { name = "fast", type = "Fast" },
+    { name = "nested", type = "Nested" },
+    { name = "inner", type = "Inner" },
+]
+
+[[parquet_writer]]
+name = "TParquetWriter"
+table = "T"
+
+[[parquet_reader]]
+name = "TParquetReader"
+table = "T"
+
+[parquet_reader.default]
+"tags.element" = ""
+"points.element.x" = 0
+"points.element.y" = 0.0
+"counts.value" = 0
+"fast.value" = 0
+"nested.element.element" = ""
+"inner.nums.element" = 0
+"inner.label" = ""
+
+# A few of the same columns, under names of their own,
+# read out of the file that TParquetWriter writes.
+[[struct]]
+name = "Spot"
+fields = [{ name = "across", type = "i32" }, { name = "down", type = "f64" }]
+
+[[vector]]
+name = "Spots"
+element = "Spot"
+
+[[table]]
+name = "U"
+columns = [
+    { name = "ident", type = "i64" },
+    { name = "spots", type = "Spots" },
+]
+
+[[parquet_reader]]
+name = "UParquetReader"
+table = "U"
+
+[parquet_reader.name_in_file]
+ident = "id"
+spots = "points"
+"spots.element.across" = "x"
+"spots.element.down" = "y"
+
+[parquet_reader.default]
+"spots.element.across" = -1
+"spots.element.down" = -1.0
+
+# The same types read out of a file that holds a null at every level.
+# The defaults belong to this reader rather than to the types,
+# so they are not the ones that TParquetReader uses.
+[[struct]]
+name = "Pt"
+fields = [{ name = "x", type = "i32" }, { name = "label", type = "str" }]
+
+[[table]]
+name = "N"
+columns = [
+    { name = "id", type = "i64" },
+    { name = "tags", type = "Tags" },
+    { name = "pt", type = "Pt" },
+    { name = "counts", type = "Counts" },
+]
+
+[[parquet_reader]]
+name = "NParquetReader"
+table = "N"
+
+[parquet_reader.default]
+"tags.element" = "<none>"
+"pt.x" = -1
+"pt.label" = "<none>"
+"counts.value" = -1

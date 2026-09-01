@@ -100,7 +100,7 @@ codegen-cpp debug parse-spec examples/table1.toml
 ## The specification
 
 A specification is a TOML document
-holding any number of sections of eight kinds.
+holding any number of sections of eleven kinds.
 Every section is an array of tables, written `[[table]]`, `[[csv_reader]]`,
 and so on.
 
@@ -108,6 +108,9 @@ and so on.
 | ---------------- | ----------------------------------------------- |
 | `table`          | the struct holding the rows                     |
 | `dataset`        | the struct holding the n-dimensional arrays     |
+| `vector`         | a name for a `std::vector`                      |
+| `map`            | a name for a `std::map` or `std::unordered_map` |
+| `struct`         | a struct of one member per field                |
 | `csv_reader`     | a class reading the table from a CSV file       |
 | `parquet_reader` | a class reading the table from a Parquet file   |
 | `csv_writer`     | a class writing the table to a CSV file         |
@@ -135,6 +138,35 @@ and one of the scalar types:
 | `bool`                   | `bool`                                |
 | `str`                    | `std::string`                         |
 
+A column may also name an aggregate type
+declared by a `vector`, a `map` or a `struct` section of the same file.
+The three cover the three shapes a group of a Parquet file can have,
+and each is read from, and written to, that shape and no other:
+
+| Section  | C++                                     | Parquet             |
+| -------- | --------------------------------------- | ------------------- |
+| `vector` | `std::vector<element>`                  | a group annotated LIST |
+| `map`    | `std::map<key, value>`                  | a group annotated MAP  |
+| `struct` | a struct of one member per field        | a plain group          |
+
+A `vector` declares the type of one `element`,
+a `map` the type of its `key` and of its `value`,
+and a `struct` its `fields`, which read like the columns of a table.
+A key of a map is one of the integer types or `str`,
+and a map may set `is_unordered` to be held in a `std::unordered_map`,
+which finds a key in constant time
+and leaves the pairs in an order not worth relying on;
+it defaults to `false`, which holds them in the order of their keys.
+
+An aggregate type may name a scalar type or another aggregate type,
+so the types stack as deep as a file does,
+and the types it names may not lead back to it.
+CSV has no way to hold any of the three,
+so a `csv_reader` or a `csv_writer` over a table with such a column
+is an error rather than a guess at an encoding.
+Datasets are closed to them for the same reason they are closed to `str`.
+See `examples/table2.toml`.
+
 A dataset declares its `dims`, which name one dimension per axis,
 and its `arrays`, each with a name and one of the numeric types above.
 `bool` and `str` are not allowed,
@@ -152,6 +184,24 @@ a mapping of column names to the value stored
 when that column is null in the input file.
 A null in any other column is an error.
 The value has to fit the type of its column.
+
+A `parquet_reader` says the same thing about the parts of a nested column
+with `default`, and says what the file calls one with `name_in_file`.
+Both are keyed by the flattened key of the part they name:
+the name of the column,
+followed by one step for every level below it,
+which is the name of a field of a struct,
+`element` for the element of a vector,
+and `value` for the value of a map.
+So `biblio.first_page` is a field of a struct column,
+`keywords.element` is one keyword,
+and `topics.element.score` is the score of one topic of a vector of them.
+Only a key that ends at a column or at a field of a struct may be renamed,
+because a file matches the rest by position,
+and only a key that ends at a scalar type takes a default,
+because a null aggregate is read as the empty value of its own type:
+a vector of no elements, a map of no keys,
+or a struct whose fields each take their own default.
 
 An `hdf5_reader` or an `hdf5_writer` may narrow the arrays it uses
 with one of two lists.
@@ -174,6 +224,23 @@ The definitions follow in an order
 in which each one is declared after everything it names,
 so the tables and the datasets lead
 and the classes and functions over them follow.
+
+Every aggregate type is written under the name that declares it,
+above the tables and the types that hold it:
+
+```cpp
+using Keywords = std::vector<std::string>;
+using Ids = std::map<std::string, std::string>;
+
+struct Biblio {
+    std::string volume;
+    std::int32_t first_page;
+
+    bool operator==(const Biblio&) const = default;
+};
+```
+
+so the name of one is the C++ type of it wherever a column names it.
 
 A `table` called `Measurement` becomes the struct `Measurement`,
 which holds the rows column by column, one `std::vector` per column.

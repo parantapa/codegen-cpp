@@ -8,12 +8,15 @@ from pydantic import ValidationError
 from codegen_cpp.spec import (
     NUMERIC_TYPES,
     Dataset,
+    FlatKey,
     Hdf5Reader,
     Hdf5Writer,
     NdArray,
     ScalarType,
+    flatten_table,
     parse_spec,
     selected_arrays,
+    sorted_aggregates,
 )
 
 EXAMPLE = Path(__file__).parent.parent / "examples" / "table1.toml"
@@ -671,4 +674,113 @@ def test_hdf5_writer_shares_the_one_namespace(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValidationError, match="duplicate table or reader names: f"):
+        parse_spec(spec_file)
+
+
+AGGREGATES = Path(__file__).parent.parent / "examples" / "table2.toml"
+
+
+def test_parse_aggregate_types() -> None:
+    """The bundled example spec parses its vectors, maps and structs."""
+    spec = parse_spec(AGGREGATES)
+
+    assert [vector.name for vector in spec.vectors] == [
+        "Keywords",
+        "Positions",
+        "Topics",
+        "Affiliations",
+    ]
+    assert spec.vectors[0].element is ScalarType.str
+    assert spec.vectors[2].element == "TopicScore"
+
+    ids, citations = spec.maps
+    assert (ids.name, ids.key, ids.value, ids.is_unordered) == (
+        "Ids",
+        ScalarType.str,
+        ScalarType.str,
+        False,
+    )
+    assert (citations.name, citations.key, citations.value) == (
+        "CitationsByYear",
+        ScalarType.i64,
+        ScalarType.u32,
+    )
+    assert citations.is_unordered
+
+    biblio = spec.structs[0]
+    assert biblio.name == "Biblio"
+    assert [field.name for field in biblio.fields] == [
+        "volume",
+        "issue",
+        "first_page",
+        "last_page",
+    ]
+    assert biblio.fields[2].type is ScalarType.i32
+
+
+def test_a_column_holds_an_aggregate_type() -> None:
+    """A column names an aggregate type where it does not name a scalar one."""
+    spec = parse_spec(AGGREGATES)
+
+    work = spec.tables[0]
+    assert work.name == "Work"
+    assert work.columns[0].type is ScalarType.i64
+    assert work.columns[2].type == "Keywords"
+    assert work.columns[7].type == "CitationsByYear"
+
+
+def test_sorted_aggregates_declares_a_type_before_the_types_that_name_it() -> None:
+    """The types come out in an order that C++ can be written in."""
+    spec = parse_spec(AGGREGATES)
+    aggregates = {aggregate.name: aggregate for aggregate in spec.aggregates}
+
+    ordered = [aggregate.name for aggregate in sorted_aggregates(aggregates)]
+
+    assert sorted(ordered) == sorted(aggregates)
+    assert ordered.index("TopicScore") < ordered.index("Topics")
+    assert ordered.index("Keywords") < ordered.index("Affiliations")
+    assert ordered.index("Positions") < ordered.index("MentionPositions")
+
+
+def test_flatten_table_names_every_part_of_a_table() -> None:
+    """A key names a column and one step for every level below it."""
+    spec = parse_spec(AGGREGATES)
+    aggregates = {aggregate.name: aggregate for aggregate in spec.aggregates}
+
+    keys = flatten_table(spec.tables[0], aggregates)
+
+    assert keys["work_id"] == FlatKey(type=ScalarType.i64, is_named=True)
+    assert keys["keywords.element"] == FlatKey(type=ScalarType.str, is_named=False)
+    assert keys["biblio.first_page"] == FlatKey(type=ScalarType.i32, is_named=True)
+    assert keys["topics.element.score"] == FlatKey(type=ScalarType.f64, is_named=True)
+    assert keys["affiliations.element.element"] == FlatKey(
+        type=ScalarType.str, is_named=False
+    )
+
+    # A key of a map is never a step of its own.
+    assert "ids.value" in keys
+    assert "ids.key" not in keys
+
+
+def test_spec_rejects_a_type_that_contains_itself(tmp_path: Path) -> None:
+    """A type that leads back to itself is an error, not an endless column."""
+    spec_file = tmp_path / "spec.toml"
+    spec_file.write_text(
+        '[[vector]]\nname = "A"\nelement = "B"\n\n'
+        '[[vector]]\nname = "B"\nelement = "A"\n\n'
+        '[[table]]\nname = "T"\ncolumns = [{ name = "a", type = "A" }]\n'
+    )
+
+    with pytest.raises(ValidationError, match="contain one another"):
+        parse_spec(spec_file)
+
+
+def test_spec_rejects_a_column_of_an_undefined_type(tmp_path: Path) -> None:
+    """A type that is neither a scalar type nor declared is reported."""
+    spec_file = tmp_path / "spec.toml"
+    spec_file.write_text(
+        '[[table]]\nname = "T"\ncolumns = [{ name = "a", type = "Missing" }]\n'
+    )
+
+    with pytest.raises(ValidationError, match="undefined type 'Missing'"):
         parse_spec(spec_file)
