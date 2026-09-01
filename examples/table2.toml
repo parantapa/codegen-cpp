@@ -383,12 +383,31 @@ citations = "counts"
 
 
 # CSV has no way to hold a vector, a map or a struct,
-# so a csv_reader or a csv_writer over a table with an aggregate column
+# so a csv_reader over a table with an aggregate column,
+# or a csv_writer that writes one,
 # is an error rather than a guess at an encoding.
 # The scalar table is written out as it always was.
 [[csv_writer]]
 name = "WorkSummaryCsvWriter"
 table = "WorkSummary"
+
+# `include` and `exclude` narrow the columns a writer writes,
+# the way they narrow the arrays of an hdf5_reader or an hdf5_writer.
+# A column that is left out is not written at all,
+# so this writer holds the two scalar columns of 'Work' and nothing else,
+# which is what makes a CSV of a table that a CSV cannot otherwise hold.
+[[csv_writer]]
+name = "WorkScalarCsvWriter"
+table = "Work"
+include = ["work_id", "title"]
+
+# `exclude` says the same thing the other way around,
+# and a column that is left out costs the writer nothing:
+# no field of the schema, no builder, and nothing appended per row.
+[[parquet_writer]]
+name = "WorkWithoutMentionsParquetWriter"
+table = "Work"
+exclude = ["mentions", "affiliations"]
 
 # Datasets are closed to aggregate types for the same reason
 # they are closed to `bool` and `str`:

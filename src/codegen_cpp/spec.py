@@ -465,10 +465,54 @@ class ParquetReader(Reader):
     KIND: ClassVar[str] = "parquet_reader"
 
 
+def check_selection(
+    kind: str,
+    name: str,
+    noun: str,
+    include: list[str] | None,
+    exclude: list[str] | None,
+) -> None:
+    """
+    Throw unless the include and exclude lists of KIND 'NAME' are usable.
+
+    NOUN is what the two lists name,
+    which is what a message about them says they hold.
+    """
+    if include is not None and exclude is not None:
+        raise ValueError(f"{kind} '{name}' lists both include and exclude")
+
+    for listed, names in (("include", include), ("exclude", exclude)):
+        if names is None:
+            continue
+        if not names:
+            raise ValueError(f"{kind} '{name}' has an empty {listed} list")
+
+        duplicates = find_duplicates(names)
+        if duplicates:
+            raise ValueError(
+                f"{kind} '{name}' has duplicate {listed} {noun}: "
+                f"{', '.join(duplicates)}"
+            )
+
+
 class Writer(TableClass):
     """The fields shared by every writer that writes out a table."""
 
     KIND: ClassVar[str] = "writer"
+
+    # At most one of these may be given.
+    # `include` names the columns that are written,
+    # and `exclude` names the columns that are not;
+    # without either one every column of the table is written.
+    # A column that is left out is not written at all,
+    # so the file holds the columns of the writer rather than of the table.
+    include: list[str] | None = None
+    exclude: list[str] | None = None
+
+    @model_validator(mode="after")
+    def check_include_and_exclude(self) -> "Writer":
+        check_selection(self.KIND, self.name, "columns", self.include, self.exclude)
+        return self
 
 
 class CsvWriter(Writer):
@@ -477,6 +521,24 @@ class CsvWriter(Writer):
 
 class ParquetWriter(Writer):
     KIND: ClassVar[str] = "parquet_writer"
+
+
+def selected_columns(table: Table, writer: Writer) -> list[Column]:
+    """
+    Return the columns of TABLE that WRITER writes, in declaration order.
+
+    The include and exclude lists of the writer select them;
+    without either one every column of the table is written.
+    """
+    if writer.include is not None:
+        included = set(writer.include)
+        return [column for column in table.columns if column.name in included]
+
+    if writer.exclude is not None:
+        excluded = set(writer.exclude)
+        return [column for column in table.columns if column.name not in excluded]
+
+    return list(table.columns)
 
 
 def table_class_keys(
@@ -541,22 +603,7 @@ class Hdf5Class(DatasetClass):
 
     @model_validator(mode="after")
     def check_include_and_exclude(self) -> "Hdf5Class":
-        if self.include is not None and self.exclude is not None:
-            raise ValueError(
-                f"{self.KIND} '{self.name}' lists both include and exclude"
-            )
-
-        for kind, names in (("include", self.include), ("exclude", self.exclude)):
-            if names is None:
-                continue
-            if not names:
-                raise ValueError(f"{self.KIND} '{self.name}' has an empty {kind} list")
-            duplicates = find_duplicates(names)
-            if duplicates:
-                raise ValueError(
-                    f"{self.KIND} '{self.name}' has duplicate {kind} arrays: "
-                    f"{', '.join(duplicates)}"
-                )
+        check_selection(self.KIND, self.name, "arrays", self.include, self.exclude)
         return self
 
 
@@ -758,9 +805,16 @@ class Spec(BaseModel):
             if table is None:
                 continue
 
+            # A writer that leaves a column out does not have to hold it,
+            # so only the columns it writes have to fit in a CSV.
+            columns = (
+                selected_columns(table, generated)
+                if isinstance(generated, Writer)
+                else table.columns
+            )
             aggregate_columns = [
                 column.name
-                for column in table.columns
+                for column in columns
                 if not isinstance(column.type, ScalarType)
             ]
             if aggregate_columns:
@@ -768,6 +822,31 @@ class Spec(BaseModel):
                     f"{generated.KIND} '{generated.name}' uses table "
                     f"'{table.name}', which has columns no CSV can hold: "
                     f"{', '.join(aggregate_columns)}"
+                )
+
+        for writer in self.writers:
+            table = tables.get(writer.table)
+            if table is None:
+                continue
+
+            declared = {column.name for column in table.columns}
+            for kind, listed in (
+                ("include", writer.include),
+                ("exclude", writer.exclude),
+            ):
+                if listed is None:
+                    continue
+                unknown = [name for name in listed if name not in declared]
+                if unknown:
+                    errors.append(
+                        f"{writer.KIND} '{writer.name}' lists {kind} columns "
+                        f"not in table '{table.name}': {', '.join(unknown)}"
+                    )
+
+            if not selected_columns(table, writer):
+                errors.append(
+                    f"{writer.KIND} '{writer.name}' selects no column "
+                    f"of table '{table.name}'"
                 )
 
         # A cycle would make the flattened form of a table infinite,
@@ -825,10 +904,17 @@ class Spec(BaseModel):
                         f"matches by position rather than by name"
                     )
 
+            # A writer names nothing of a column that it does not write.
+            written: set[str] | None = None
+            if isinstance(generated, Writer):
+                written = {column.name for column in selected_columns(table, generated)}
+
             # Renaming may not make two parts of one group share a name.
             groups: dict[str, list[str]] = {}
             for key, flat in keys.items():
                 if not flat.is_named:
+                    continue
+                if written is not None and key.partition(".")[0] not in written:
                     continue
                 parent, _, last = key.rpartition(".")
                 groups.setdefault(parent, []).append(

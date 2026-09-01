@@ -124,6 +124,23 @@ void write_parquet(const std::string& path, const std::shared_ptr<arrow::Table>&
              "write parquet");
 }
 
+// Return the names of the columns of a Parquet file, in the order it holds
+// them, read out of the schema that the file carries.
+std::vector<std::string> parquet_columns(const std::string& path) {
+    auto maybe_input = arrow::io::ReadableFile::Open(path);
+    check_ok(maybe_input.status(), "open parquet input");
+
+    parquet::arrow::FileReaderBuilder builder;
+    check_ok(builder.Open(*maybe_input), "open parquet reader");
+
+    auto maybe_reader = builder.memory_pool(arrow::default_memory_pool())->Build();
+    check_ok(maybe_reader.status(), "build parquet reader");
+
+    std::shared_ptr<arrow::Schema> schema;
+    check_ok((*maybe_reader)->GetSchema(&schema), "read parquet schema");
+    return schema->field_names();
+}
+
 // Read every row of the reader in batches, and return the table holding them.
 template <typename Reader>
 Point read_all(Reader& reader, std::size_t expected_batches) {
@@ -489,6 +506,21 @@ void test_csv_writer_writes_the_names_of_the_file() {
     CHECK(read_back[0].flag == true);
 }
 
+// A column that the writer leaves out is not written at all.
+void test_csv_writer_writes_only_the_columns_it_lists() {
+    Point points;
+    points.push_back(1, "alpha", 1.5, true);
+    points.push_back(2, "beta", 2.5, false);
+
+    {
+        PointLabelCsvWriter writer("some_columns.csv");
+        writer.write_batch(points);
+        writer.close();
+    }
+
+    CHECK(read_file("some_columns.csv") == "\"id\",\"label\"\n1,\"alpha\"\n2,\"beta\"\n");
+}
+
 void test_csv_writer_compresses() {
     Point points;
     points.push_back(1, "alpha", 1.5, true);
@@ -631,6 +663,27 @@ void test_parquet_writer_writes_the_names_of_the_file() {
     CHECK(contains(error, "has no column 'id'"));
 }
 
+// A column that the writer leaves out is not written at all,
+// so a reader of the whole table does not find it in the file.
+void test_parquet_writer_writes_only_the_columns_it_lists() {
+    Point points;
+    points.push_back(1, "alpha", 1.5, true);
+    points.push_back(2, "beta", 2.5, false);
+
+    {
+        PointLabelParquetWriter writer("some_columns.parquet");
+        writer.write_batch(points);
+        writer.close();
+    }
+
+    CHECK(parquet_columns("some_columns.parquet") ==
+          (std::vector<std::string>{"id", "label"}));
+
+    const std::string error = error_of(
+        [] { PointParquetReader reader("some_columns.parquet", 4); });
+    CHECK(contains(error, "has no column 'score'"));
+}
+
 void test_parquet_writer_options() {
     Point points;
     for (std::int64_t i = 0; i < 5; ++i) {
@@ -712,12 +765,14 @@ int main() {
 
     test_csv_writer_round_trip();
     test_csv_writer_writes_the_names_of_the_file();
+    test_csv_writer_writes_only_the_columns_it_lists();
     test_csv_writer_compresses();
     test_csv_writer_closes_itself();
     test_csv_writer_reports_a_bad_path();
 
     test_parquet_writer_round_trip();
     test_parquet_writer_writes_the_names_of_the_file();
+    test_parquet_writer_writes_only_the_columns_it_lists();
     test_parquet_writer_options();
     test_parquet_writer_closes_itself();
     test_parquet_writer_reports_a_bad_path();

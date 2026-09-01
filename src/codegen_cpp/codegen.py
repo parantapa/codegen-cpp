@@ -28,7 +28,9 @@ from .spec import (
     Table,
     TableClass,
     Vector,
+    Writer,
     selected_arrays,
+    selected_columns,
     sorted_aggregates,
 )
 
@@ -368,26 +370,31 @@ def table_nodes(
     generated: TableClass | None = None,
 ) -> list[TypeNode]:
     """
-    Return one node per column of TABLE, in declaration order.
+    Return one node per column of TABLE that GENERATED uses,
+    in declaration order.
 
     GENERATED is the reader or the writer that the nodes are built for;
     the names in the file of either one are read off it,
-    and the defaults of a reader with them.
+    the defaults of a reader with them,
+    and the columns that a writer leaves out are left out here.
     """
     aggregates = aggregates or {}
 
     defaults: dict[str, DefaultValue] = {}
     names_in_file: dict[str, str] = {}
+    columns = table.columns
     if generated is not None:
         names_in_file = generated.name_in_file
     if isinstance(generated, Reader):
         defaults.update(generated.default)
+    if isinstance(generated, Writer):
+        columns = selected_columns(table, generated)
 
     return [
         build_node(
             column.name, column.type, aggregates, defaults, names_in_file, column.name
         )
-        for column in table.columns
+        for column in columns
     ]
 
 

@@ -7,16 +7,20 @@ from pydantic import ValidationError
 
 from codegen_cpp.spec import (
     NUMERIC_TYPES,
+    Column,
     Compression,
+    CsvWriter,
     Dataset,
     FlatKey,
     Hdf5Reader,
     Hdf5Writer,
     NdArray,
     ScalarType,
+    Table,
     flatten_table,
     parse_spec,
     selected_arrays,
+    selected_columns,
     sorted_aggregates,
 )
 
@@ -449,6 +453,209 @@ def test_writer_that_writes_two_columns_by_one_name_rejected(
         match=f"{section} 'W' writes two parts of table 't' by one name: b",
     ):
         parse_spec(spec_file)
+
+
+AGGREGATE_TABLE = """
+[[struct]]
+name = "S"
+fields = [{ name = "x", type = "i32" }]
+
+[[table]]
+name = "t"
+columns = [
+    { name = "a", type = "i32" },
+    { name = "b", type = "str" },
+    { name = "s", type = "S" },
+]
+"""
+
+
+@pytest.mark.parametrize("section", ["csv_writer", "parquet_writer"])
+def test_writer_include_and_exclude_accepted(tmp_path: Path, section: str) -> None:
+    """A writer narrows the columns it writes the way an HDF5 class does."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_TABLE + f"[[{section}]]\n"
+        'name = "W"\n'
+        'table = "t"\n'
+        'include = ["a"]\n'
+        f"\n[[{section}]]\n"
+        'name = "X"\n'
+        'table = "t"\n'
+        'exclude = ["a"]\n',
+    )
+
+    spec = parse_spec(spec_file)
+
+    assert spec.writers[0].include == ["a"]
+    assert spec.writers[0].exclude is None
+    assert spec.writers[1].exclude == ["a"]
+
+
+@pytest.mark.parametrize("section", ["csv_writer", "parquet_writer"])
+def test_writer_without_include_or_exclude_writes_every_column(
+    tmp_path: Path, section: str
+) -> None:
+    """A writer that lists neither writes the whole table."""
+    spec_file = write_spec(
+        tmp_path, GOOD_TABLE + f'[[{section}]]\nname = "W"\ntable = "t"\n'
+    )
+
+    writer = parse_spec(spec_file).writers[0]
+
+    assert writer.include is None
+    assert writer.exclude is None
+
+
+@pytest.mark.parametrize("section", ["csv_writer", "parquet_writer"])
+def test_writer_with_both_include_and_exclude_rejected(
+    tmp_path: Path, section: str
+) -> None:
+    """The two lists say the same thing twice, so only one may be given."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_TABLE + f"[[{section}]]\n"
+        'name = "W"\n'
+        'table = "t"\n'
+        'include = ["a"]\n'
+        'exclude = ["b"]\n',
+    )
+
+    with pytest.raises(
+        ValidationError, match=f"{section} 'W' lists both include and exclude"
+    ):
+        parse_spec(spec_file)
+
+
+@pytest.mark.parametrize("kind", ["include", "exclude"])
+def test_writer_with_an_empty_list_rejected(tmp_path: Path, kind: str) -> None:
+    """A list that is given says something, so it may not be empty."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_TABLE + f'[[csv_writer]]\nname = "W"\ntable = "t"\n{kind} = []\n',
+    )
+
+    with pytest.raises(
+        ValidationError, match=f"csv_writer 'W' has an empty {kind} list"
+    ):
+        parse_spec(spec_file)
+
+
+@pytest.mark.parametrize("kind", ["include", "exclude"])
+def test_writer_with_a_duplicate_column_rejected(tmp_path: Path, kind: str) -> None:
+    """Naming a column twice says no more than naming it once."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_TABLE + "[[csv_writer]]\n"
+        'name = "W"\n'
+        'table = "t"\n'
+        f'{kind} = ["a", "a"]\n',
+    )
+
+    with pytest.raises(
+        ValidationError, match=f"csv_writer 'W' has duplicate {kind} columns: a"
+    ):
+        parse_spec(spec_file)
+
+
+@pytest.mark.parametrize("kind", ["include", "exclude"])
+def test_writer_with_an_unknown_column_rejected(tmp_path: Path, kind: str) -> None:
+    """A list may only name columns of the table the writer refers to."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_TABLE + "[[parquet_writer]]\n"
+        'name = "W"\n'
+        'table = "t"\n'
+        f'{kind} = ["a", "zzz"]\n',
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=f"parquet_writer 'W' lists {kind} columns not in table 't': zzz",
+    ):
+        parse_spec(spec_file)
+
+
+def test_writer_that_selects_no_column_rejected(tmp_path: Path) -> None:
+    """A writer that writes nothing at all is an error, not an empty file."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_TABLE + "[[csv_writer]]\n"
+        'name = "W"\n'
+        'table = "t"\n'
+        'exclude = ["a", "b"]\n',
+    )
+
+    with pytest.raises(
+        ValidationError, match="csv_writer 'W' selects no column of table 't'"
+    ):
+        parse_spec(spec_file)
+
+
+def test_csv_writer_may_leave_out_a_column_no_csv_can_hold(tmp_path: Path) -> None:
+    """A column that a CSV cannot hold is fine where it is not written."""
+    spec_file = write_spec(
+        tmp_path,
+        AGGREGATE_TABLE + '[[csv_writer]]\nname = "W"\ntable = "t"\n'
+        'exclude = ["s"]\n',
+    )
+
+    assert parse_spec(spec_file).csv_writers[0].exclude == ["s"]
+
+
+def test_csv_writer_that_writes_a_column_no_csv_can_hold_rejected(
+    tmp_path: Path,
+) -> None:
+    """A column that is written still has to fit in a CSV."""
+    spec_file = write_spec(
+        tmp_path,
+        AGGREGATE_TABLE + '[[csv_writer]]\nname = "W"\ntable = "t"\n'
+        'exclude = ["b"]\n',
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="csv_writer 'W' uses table 't', " "which has columns no CSV can hold: s",
+    ):
+        parse_spec(spec_file)
+
+
+def test_writer_may_rename_onto_the_name_of_a_column_it_leaves_out(
+    tmp_path: Path,
+) -> None:
+    """Two columns share no name where only one of them is written."""
+    spec_file = write_spec(
+        tmp_path,
+        GOOD_TABLE + "[[csv_writer]]\n"
+        'name = "W"\n'
+        'table = "t"\n'
+        'include = ["a"]\n'
+        'name_in_file = { a = "b" }\n',
+    )
+
+    assert parse_spec(spec_file).csv_writers[0].name_in_file == {"a": "b"}
+
+
+def test_selected_columns_of_a_writer() -> None:
+    """The lists pick the columns out in the order the table declares them."""
+    table = Table(
+        name="t",
+        columns=[
+            Column(name="a", type=ScalarType.i32),
+            Column(name="b", type=ScalarType.str),
+            Column(name="c", type=ScalarType.f64),
+        ],
+    )
+
+    every = CsvWriter(name="W", table="t")
+    assert [c.name for c in selected_columns(table, every)] == ["a", "b", "c"]
+
+    # The declaration order wins over the order of the list.
+    included = CsvWriter(name="W", table="t", include=["c", "a"])
+    assert [c.name for c in selected_columns(table, included)] == ["a", "c"]
+
+    excluded = CsvWriter(name="W", table="t", exclude=["b"])
+    assert [c.name for c in selected_columns(table, excluded)] == ["a", "c"]
 
 
 def test_table_without_columns_rejected(tmp_path: Path) -> None:

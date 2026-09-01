@@ -304,7 +304,8 @@ An aggregate type may name a scalar type or another aggregate type,
 so the types stack as deep as a file does,
 and the types it names may not lead back to it.
 CSV has no way to hold any of the three,
-so a `csv_reader` or a `csv_writer` over a table with such a column
+so a `csv_reader` over a table with such a column,
+or a `csv_writer` that writes one,
 is an error rather than a guess at an encoding.
 Datasets are closed to them for the same reason they are closed to `str`.
 See `examples/table2.toml`.
@@ -342,6 +343,22 @@ is written back out under the names the file uses.
 A writer takes no `default`,
 because a table holds a value for every part of every row it holds.
 
+A `csv_writer` and a `parquet_writer` may also narrow the columns they write,
+with the same two lists that an `hdf5_reader` and an `hdf5_writer` take.
+`include` names the columns that are written,
+and `exclude` names the columns that are not;
+without either one every column of the table is written.
+A column that is left out is not written at all,
+so the file holds the columns of the writer rather than of the table,
+and a reader of the whole table does not find them all in it.
+A list that is given may not be empty,
+may only name columns of the table the writer refers to,
+and may not name the same column twice.
+Declaring both lists is an error,
+and so is a writer left with no column at all.
+A `csv_writer` over a table with a column that no CSV can hold
+is fine as long as it leaves that column out.
+
 Earlier versions spelled `default` as `default_values`,
 which is no longer read;
 a specification that still declares it is rejected rather than ignored.
@@ -367,7 +384,7 @@ a vector of no elements, a map of no keys,
 or a struct whose fields each take their own default.
 
 An `hdf5_reader` or an `hdf5_writer` may narrow the arrays it uses
-with one of two lists.
+with the same two lists, over the arrays of its dataset.
 `include` names the arrays that are used,
 and `exclude` names the arrays that are not;
 without either one every array of the dataset is used.

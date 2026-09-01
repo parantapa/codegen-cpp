@@ -54,3 +54,15 @@ table = "Point"
 name = "PointRenamingParquetWriter"
 table = "Point"
 name_in_file = { id = "Point ID", score = "Score (mean)" }
+
+# Writes some of the columns of the table and leaves the rest out,
+# so the file holds the columns of the writer rather than of the table.
+[[csv_writer]]
+name = "PointLabelCsvWriter"
+table = "Point"
+include = ["id", "label"]
+
+[[parquet_writer]]
+name = "PointLabelParquetWriter"
+table = "Point"
+exclude = ["score", "flag"]

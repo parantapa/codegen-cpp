@@ -477,6 +477,28 @@ def test_render_csv_writer_writes_the_names_of_the_file() -> None:
     assert "builder_id.AppendValues(table.id)" in header
 
 
+def test_render_csv_writer_writes_only_the_columns_it_includes() -> None:
+    """A column that the writer leaves out is not written at all."""
+    writer = CsvWriter(name="PointCsvWriter", table="Point", include=["id"])
+
+    header = render_csv_writer(writer, TABLE)
+
+    assert 'arrow::field("id", arrow::uint32()),' in header
+    assert "builder_id.AppendValues(table.id)" in header
+    assert "label" not in header
+
+
+def test_render_csv_writer_writes_every_column_it_does_not_exclude() -> None:
+    """Exclude is the other way of saying the same thing."""
+    writer = CsvWriter(name="PointCsvWriter", table="Point", exclude=["label"])
+
+    header = render_csv_writer(writer, TABLE)
+
+    assert 'arrow::field("id", arrow::uint32()),' in header
+    assert "arrow::StringBuilder" not in header
+    assert "label" not in header
+
+
 def test_generate_defines_every_csv_writer(tmp_path: Path) -> None:
     """Generate defines a class for every CSV writer of the spec."""
     spec_file = tmp_path / "points.toml"
@@ -529,6 +551,31 @@ def test_render_parquet_writer_writes_the_names_of_the_file() -> None:
     assert 'arrow::field("Point ID", arrow::uint32()),' in header
     assert 'arrow::field("label", arrow::utf8()),' in header
     assert "builder_id.AppendValues(table.id)" in header
+
+
+def test_render_parquet_writer_writes_only_the_columns_it_includes() -> None:
+    """A column that the writer leaves out reaches neither schema nor batch."""
+    writer = ParquetWriter(name="PointParquetWriter", table="Point", exclude=["label"])
+
+    header = render_parquet_writer(writer, TABLE)
+
+    assert 'arrow::field("id", arrow::uint32()),' in header
+    assert "column_id," in header
+    assert "label" not in header
+
+
+def test_render_parquet_writer_leaves_out_the_builders_of_a_column_it_skips() -> None:
+    """A nested column that is not written builds nothing either."""
+    writer = ParquetWriter(
+        name="RowParquetWriter", table="Row", exclude=["tags", "counts"]
+    )
+
+    header = render_parquet_writer(writer, NESTED_TABLE, NESTED_TYPES)
+
+    assert "builder_spot_" in header
+    assert "builder_tags_" not in header
+    assert "builder_counts_" not in header
+    assert "append_tags" not in header
 
 
 def test_generate_defines_every_parquet_writer(tmp_path: Path) -> None:
@@ -1436,8 +1483,17 @@ def test_generate_defines_every_class_over_a_nested_table(tmp_path: Path) -> Non
         "class WorkParquetWriter {",
         "class WorkExportParquetWriter {",
         "class WorkSummaryCsvWriter {",
+        "class WorkScalarCsvWriter {",
+        "class WorkWithoutMentionsParquetWriter {",
     ):
         assert header.count(declaration) == 1, declaration
+
+    # A writer that narrows its columns writes those and nothing else.
+    scalar_writer = definition_of(header, "WorkScalarCsvWriter")
+    assert 'arrow::field("work_id", arrow::int64()),' in scalar_writer
+    assert 'arrow::field("title", arrow::utf8()),' in scalar_writer
+    assert "keywords" not in scalar_writer
+    assert "mentions" not in definition_of(header, "WorkWithoutMentionsParquetWriter")
 
     # The writer that renames writes the names that the reader looks for,
     # and the one that does not writes the names of the specification.
