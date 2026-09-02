@@ -92,6 +92,9 @@ class {{ parquet_reader.name }} {
         check_schema(*batches_->schema());
     }
 
+    {{ parquet_reader.name }}(const {{ parquet_reader.name }}&) = delete;
+    {{ parquet_reader.name }}& operator=(const {{ parquet_reader.name }}&) = delete;
+
     // Return true if read_batch would append at least one row.
     bool has_more_batches() {
         fill_batch();

@@ -60,6 +60,9 @@ class {{ parquet_writer.name }} {
         }
     }
 
+    {{ parquet_writer.name }}(const {{ parquet_writer.name }}&) = delete;
+    {{ parquet_writer.name }}& operator=(const {{ parquet_writer.name }}&) = delete;
+
     void write_batch(const {{ table.name }}& table) {
         if (writer_ == nullptr) [[unlikely]] {
             throw std::runtime_error("'" + parquet_file_ + "' is closed");

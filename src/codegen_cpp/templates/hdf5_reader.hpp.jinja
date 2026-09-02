@@ -162,6 +162,9 @@ class {{ hdf5_reader.name }} {
         }
     }
 
+    {{ hdf5_reader.name }}(const {{ hdf5_reader.name }}&) = delete;
+    {{ hdf5_reader.name }}& operator=(const {{ hdf5_reader.name }}&) = delete;
+
     // Read every array into data, which says by the shape it was allocated
     // with what shape the file has to hold them in.
     void read_dataset({{ dataset.name }}& data) const {

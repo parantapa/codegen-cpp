@@ -45,6 +45,9 @@ class {{ csv_writer.name }} {
         }
     }
 
+    {{ csv_writer.name }}(const {{ csv_writer.name }}&) = delete;
+    {{ csv_writer.name }}& operator=(const {{ csv_writer.name }}&) = delete;
+
     void write_batch(const {{ table.name }}& table) {
         if (writer_ == nullptr) [[unlikely]] {
             throw std::runtime_error("'" + csv_file_ + "' is closed");

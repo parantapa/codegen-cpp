@@ -1617,3 +1617,23 @@ def test_generate_defines_every_class_over_a_nested_table(tmp_path: Path) -> Non
 
     # A reader of a nested table reaches for the schema of the Parquet file.
     assert "#include <parquet/schema.h>" in header
+
+
+def test_every_reader_and_writer_deletes_its_copy_operations() -> None:
+    """
+    A reader and a writer hold the file they work on,
+    so neither may be copied.
+    """
+    headers = {
+        "PointReader": render_csv_reader(READER, TABLE),
+        "PointParquetReader": render_parquet_reader(PARQUET_READER, TABLE),
+        "PointCsvWriter": render_csv_writer(WRITER, TABLE),
+        "PointParquetWriter": render_parquet_writer(PARQUET_WRITER, TABLE),
+        "TileDataHdf5Reader": render_hdf5_reader(HDF5_READER, DATASET),
+        "TileDataHdf5Writer": render_hdf5_writer(HDF5_WRITER, DATASET),
+    }
+
+    for name, header in headers.items():
+        definition = definition_of(header, name)
+        assert f"    {name}(const {name}&) = delete;" in definition, name
+        assert f"    {name}& operator=(const {name}&) = delete;" in definition, name

@@ -570,6 +570,10 @@ which keeps the memory it has allocated.
 The two may be mixed:
 `read_all()` appends whatever the calls to `read_batch()` before it left.
 
+Every reader and writer holds the file it works on,
+so none of them can be copied:
+the copy constructor and the copy assignment operator are deleted.
+
 A writer replaces the file it opens if it already exists.
 `close()` writes out what is left and releases the file;
 calling it twice is allowed.
@@ -602,6 +606,9 @@ becomes one class over `<H5Cpp.h>` and the struct of the dataset:
 class TileDataHdf5Reader {
   public:
     TileDataHdf5Reader(H5::H5File& file, const std::string& group_path);
+
+    TileDataHdf5Reader(const TileDataHdf5Reader&) = delete;
+    TileDataHdf5Reader& operator=(const TileDataHdf5Reader&) = delete;
 
     void read_dataset(TileData& data) const;
     void read_partial_dataset(TileData& data,
@@ -684,6 +691,9 @@ One called `TileDataHdf5Writer` over the same dataset becomes:
 class TileDataHdf5Writer {
   public:
     TileDataHdf5Writer(H5::H5File& file, const std::string& group_path);
+
+    TileDataHdf5Writer(const TileDataHdf5Writer&) = delete;
+    TileDataHdf5Writer& operator=(const TileDataHdf5Writer&) = delete;
 
     void write_dataset(const TileData& data);
     void create_dataset(std::span<const std::size_t> shape);

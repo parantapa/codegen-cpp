@@ -207,6 +207,9 @@ class {{ hdf5_writer.name }} {
         }
     }
 
+    {{ hdf5_writer.name }}(const {{ hdf5_writer.name }}&) = delete;
+    {{ hdf5_writer.name }}& operator=(const {{ hdf5_writer.name }}&) = delete;
+
     // Write every array of data into the group.
     // An array the group already holds under the same name is replaced,
     // whatever shape and datatype it was stored with.
