@@ -11,6 +11,8 @@ from pydantic import BaseModel, BeforeValidator, model_validator
 
 
 class ScalarType(Enum):
+    """One of the types that a single value of a specification can have."""
+
     i8 = "i8"
     i16 = "i16"
     i32 = "i32"
@@ -62,12 +64,9 @@ DefaultValue = bool | int | float | str
 
 
 def check_default_value(type: ScalarType, value: DefaultValue) -> str | None:
-    """
-    Return the reason why VALUE cannot be stored in TYPE, or None.
-
-    Note that `bool` is a subclass of `int` in Python,
-    so booleans are checked before integers.
-    """
+    """Return the reason why VALUE cannot be stored in TYPE, or None."""
+    # `bool` is a subclass of `int` in Python,
+    # so booleans are checked before integers.
     if type is ScalarType.bool:
         if not isinstance(value, bool):
             return "expects a boolean"
@@ -118,8 +117,8 @@ class Member(BaseModel):
     The name and the type of one part of a table.
 
     A member says what a value is called in C++ and what shape it has,
-    and nothing about the file it is read from:
-    the name a reader looks for, and the value it stores for a null,
+    and nothing about the file it is read from.
+    The name a reader looks for, and the value it stores for a null,
     are declared by the reader itself.
     """
 
@@ -247,7 +246,7 @@ def sorted_aggregates(aggregates: dict[str, Aggregate]) -> list[Aggregate]:
     Return the aggregate types in an order that declares each of them
     before the types that name it.
 
-    The declared types have to be acyclic, or this does not terminate;
+    The declared types have to be acyclic, or this does not terminate.
     `find_type_cycles` reports the ones that are not.
     """
     ordered: dict[str, Aggregate] = {}
@@ -279,11 +278,11 @@ class FlatKey(NamedTuple):
 
     type: ScalarType | str
 
-    # Whether the last step of the key names a column or a field of a struct,
-    # which is what a file names in turn,
-    # and so what `name_in_file` of a reader may replace.
-    # The element of a vector and the value of a map are matched by position,
-    # so neither is named by the file or by the specification.
+    # Whether the last step of the key names a column or a field of a struct.
+    # That is what a file names in turn,
+    # and so what `name_in_file` of a reader can replace.
+    # The element of a vector and the value of a map are matched by position.
+    # Neither one is named by the file or by the specification.
     is_named: bool
 
 
@@ -294,12 +293,12 @@ def flatten_table(
     Return every key of TABLE in its flattened form, in declaration order.
 
     A key is the name of a column
-    followed by one step per level below it:
-    the name of a field of a struct,
-    `element` for the element of a vector,
+    followed by one step per level below it.
+    A step is the name of a field of a struct.
+    It is `element` for the element of a vector,
     and `value` for the value of a map.
-    The key of a map is never a step of its own,
-    because a key of a Parquet MAP is never null
+    The key of a map is never a step of its own.
+    A key of a Parquet MAP is never null,
     and is never matched against the specification.
 
     A type that is not declared stops the walk where it stands,
@@ -332,6 +331,8 @@ def flatten_table(
 
 
 class Table(BaseModel):
+    """A named set of columns, whose rows are held one column at a time."""
+
     name: str
     columns: list[Column]
 
@@ -350,6 +351,8 @@ class Table(BaseModel):
 
 
 class NdArray(BaseModel):
+    """One array of a dataset, and the type of its elements."""
+
     name: str
     type: ScalarType
 
@@ -367,13 +370,15 @@ class NdArray(BaseModel):
 
 
 class Dataset(BaseModel):
+    """A named set of n-dimensional arrays that share one shape."""
+
     name: str
     dims: list[str]
     arrays: list[NdArray]
 
     # The arrays are stored in row major order,
-    # in which the last dim varies fastest,
-    # unless column_major asks for the first dim to vary fastest instead.
+    # in which the last dim varies fastest.
+    # column_major asks for the first dim to vary fastest instead.
     column_major: bool = False
 
     @property
@@ -417,13 +422,13 @@ class TableClass(BaseModel):
 
     # Keyed by the flattened keys of the table that is read or written.
     # A CSV file holds one column and no level below it,
-    # so a CSV reader or writer keys them by the names of the columns;
-    # a Parquet reader or writer reaches a field of a struct at any depth,
-    # the element of a vector and the value of a map alike.
+    # so a CSV reader or writer keys them by the names of the columns.
+    # A Parquet reader or writer reaches a field of a struct at any depth.
+    # It reaches the element of a vector and the value of a map alike.
     #
     # `name_in_file` is the name the file gives the part,
-    # which a reader looks for and a writer writes,
-    # where that is not the name the specification uses.
+    # which a reader looks for and a writer writes.
+    # It is declared where that is not the name the specification uses.
     name_in_file: dict[str, str] = {}
 
 
@@ -441,12 +446,10 @@ class Reader(TableClass):
     @model_validator(mode="before")
     @classmethod
     def check_default_values(cls, data: Any) -> Any:
-        """
-        Reject default_values, which default replaced.
-
-        The two said the same thing, and a specification that still says it
-        the old way is told so rather than read as one that says nothing.
-        """
+        """Reject default_values, which default replaced."""
+        # The two said the same thing.
+        # A specification that still says it the old way is told so,
+        # rather than read as one that says nothing.
         if isinstance(data, dict) and "default_values" in data:
             name = data.get("name")
             where = f" '{name}'" if isinstance(name, str) and name else ""
@@ -458,10 +461,14 @@ class Reader(TableClass):
 
 
 class CsvReader(Reader):
+    """A class reading a table out of a CSV file."""
+
     KIND: ClassVar[str] = "csv_reader"
 
 
 class ParquetReader(Reader):
+    """A class reading a table out of a Parquet file."""
+
     KIND: ClassVar[str] = "parquet_reader"
 
 
@@ -500,10 +507,10 @@ class Writer(TableClass):
 
     KIND: ClassVar[str] = "writer"
 
-    # At most one of these may be given.
+    # At most one of these is given.
     # `include` names the columns that are written,
-    # and `exclude` names the columns that are not;
-    # without either one every column of the table is written.
+    # and `exclude` names the columns that are not.
+    # Without either one, every column of the table is written.
     # A column that is left out is not written at all,
     # so the file holds the columns of the writer rather than of the table.
     include: list[str] | None = None
@@ -516,10 +523,14 @@ class Writer(TableClass):
 
 
 class CsvWriter(Writer):
+    """A class writing a table into a CSV file."""
+
     KIND: ClassVar[str] = "csv_writer"
 
 
 class ParquetWriter(Writer):
+    """A class writing a table into a Parquet file."""
+
     KIND: ClassVar[str] = "parquet_writer"
 
 
@@ -527,8 +538,8 @@ def selected_columns(table: Table, writer: Writer) -> list[Column]:
     """
     Return the columns of TABLE that WRITER writes, in declaration order.
 
-    The include and exclude lists of the writer select them;
-    without either one every column of the table is written.
+    The include and exclude lists of the writer select them.
+    Without either one, every column of the table is written.
     """
     if writer.include is not None:
         included = set(writer.include)
@@ -545,12 +556,12 @@ def table_class_keys(
     generated: TableClass, table: Table, aggregates: dict[str, Aggregate]
 ) -> dict[str, FlatKey]:
     """
-    Return the keys of TABLE that GENERATED may name,
+    Return the keys of TABLE that GENERATED can name,
     and what each of them names.
 
     A CSV file holds nothing but the columns of a table,
-    so a CSV reader or writer names those and nothing below them,
-    and a Parquet reader or writer names every key of the flattened table.
+    so a CSV reader or writer names those and nothing below them.
+    A Parquet reader or writer names every key of the flattened table.
     """
     if isinstance(generated, (CsvReader, CsvWriter)):
         return {
@@ -594,10 +605,10 @@ class Hdf5Class(DatasetClass):
 
     KIND: ClassVar[str] = "hdf5 class"
 
-    # At most one of these may be given.
+    # At most one of these is given.
     # `include` names the arrays that are used,
-    # and `exclude` names the arrays that are not;
-    # without either one every array of the dataset is used.
+    # and `exclude` names the arrays that are not.
+    # Without either one, every array of the dataset is used.
     include: list[str] | None = None
     exclude: list[str] | None = None
 
@@ -622,12 +633,12 @@ class Hdf5Writer(Hdf5Class):
     # `chunk` is the shape of one chunk, one extent per dim of the dataset,
     # and every extent of it is at least one.
     # An extent that reaches past the array it is stored along
-    # is cut down to the array when the file is written,
-    # so one chunk fits a dataset of any size.
+    # is cut down to the array when the file is written.
+    # One chunk therefore fits a dataset of any size.
     #
     # `compression` names the filter the chunks are compressed with,
-    # `compression_level` tunes it where the filter takes a level,
-    # and `shuffle` puts the shuffle filter before the compressor,
+    # and `compression_level` tunes it where the filter takes a level.
+    # `shuffle` puts the shuffle filter before the compressor,
     # which usually pays for itself on an array of numbers.
     # A filter only applies to an array stored in chunks,
     # so any of the three asks for `chunk` as well.
@@ -688,8 +699,8 @@ def selected_arrays(dataset: Dataset, hdf5_class: Hdf5Class) -> list[NdArray]:
     """
     Return the arrays of DATASET that HDF5_CLASS uses, in declaration order.
 
-    The include and exclude lists of the reader or writer select them;
-    without either one every array of the dataset is used.
+    The include and exclude lists of the reader or writer select them.
+    Without either one, every array of the dataset is used.
     """
     if hdf5_class.include is not None:
         included = set(hdf5_class.include)
@@ -703,6 +714,8 @@ def selected_arrays(dataset: Dataset, hdf5_class: Hdf5Class) -> list[NdArray]:
 
 
 class Spec(BaseModel):
+    """Everything one specification declares, by the section declaring it."""
+
     tables: list[Table] = []
     datasets: list[Dataset] = []
     vectors: list[Vector] = []
@@ -764,8 +777,8 @@ class Spec(BaseModel):
             errors.append(f"duplicate table or reader names: {', '.join(duplicates)}")
 
         # A type that is not a scalar type has to be an aggregate type
-        # declared in the same file,
-        # and the aggregate types may not contain one another.
+        # declared in the same file.
+        # The aggregate types cannot contain one another.
         aggregates = {aggregate.name: aggregate for aggregate in self.aggregates}
         for aggregate in self.aggregates:
             unknown = [
@@ -849,8 +862,8 @@ class Spec(BaseModel):
                     f"of table '{table.name}'"
                 )
 
-        # A cycle would make the flattened form of a table infinite,
-        # and is reported above, so the keys are only walked without one.
+        # A cycle makes the flattened form of a table infinite.
+        # One is reported already, so the keys are only walked without one.
         for reader in self.readers if not cycles else []:
             table = tables.get(reader.table)
             if table is None:
@@ -879,8 +892,8 @@ class Spec(BaseModel):
                         f"'{key}' that {reason}"
                     )
 
-        # A reader and a writer name a part of a file the same way,
-        # the one to look for it and the other to write it.
+        # A reader and a writer name a part of a file the same way.
+        # The one looks for it, and the other writes it.
         for generated in self.table_classes if not cycles else []:
             table = tables.get(generated.table)
             if table is None:
@@ -909,7 +922,7 @@ class Spec(BaseModel):
             if isinstance(generated, Writer):
                 written = {column.name for column in selected_columns(table, generated)}
 
-            # Renaming may not make two parts of one group share a name.
+            # A rename cannot make two parts of one group share a name.
             groups: dict[str, list[str]] = {}
             for key, flat in keys.items():
                 if not flat.is_named:
@@ -994,6 +1007,14 @@ SECTIONS = {
 
 
 def parse_spec(spec_file: Path) -> Spec:
+    """
+    Return the specification that SPEC_FILE declares.
+
+    Raises `ValueError` where SPEC_FILE is not TOML,
+    and where the specification does not hold together.
+    A section declared as `[section]` rather than `[[section]]`
+    raises it as well.
+    """
     raw: dict[str, Any] = tomllib.loads(spec_file.read_text())
 
     for singular, plural in SECTIONS.items():

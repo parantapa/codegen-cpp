@@ -13,7 +13,7 @@ arrow/*:with_zlib=True
 arrow/*:with_zstd=True
 hdf5/*:enable_cxx=True
 
-# The compression filters that hdf5 loads at run time.
+# The compression filters that HDF5 loads at run time.
 # Only the ones the tests use are built.
 hdf5_plugins/*:zstd=True
 hdf5_plugins/*:lz4=True

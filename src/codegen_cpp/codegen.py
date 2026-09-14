@@ -114,9 +114,9 @@ HDF5_NATIVE_TYPES = {
 }
 
 
-# The compression filters that hdf5 loads at run time,
-# by the id each of them is registered under.
-# `deflate` is built into hdf5 and is asked for by name rather than by id,
+# The compression filters that HDF5 loads at run time,
+# by the ID each of them is registered under.
+# `deflate` is built into HDF5, and is asked for by name rather than by ID,
 # so it is not one of these, and neither is `none`.
 HDF5_FILTER_IDS = {
     Compression.zstd: 32015,
@@ -124,7 +124,7 @@ HDF5_FILTER_IDS = {
 }
 
 # The level that `deflate` is asked for with where a writer names none,
-# which is the level that hdf5 itself suggests.
+# which is the level that HDF5 itself suggests.
 # Every other filter is asked for without a level instead,
 # which leaves it the one the plugin holding it was built with.
 DEFAULT_DEFLATE_LEVEL = 6
@@ -135,8 +135,8 @@ def cpp_type(type: ScalarType | str) -> str:
     Return the C++ type used to represent TYPE.
 
     Every aggregate type is written into the header
-    under the name that declares it,
-    so the name of one is already the C++ type of it.
+    under the name that declares it.
+    The name of one is therefore already the C++ type of it.
     """
     if isinstance(type, str):
         return type
@@ -184,7 +184,7 @@ def cpp_literal(value: DefaultValue, type: ScalarType) -> str:
     Return VALUE as a C++ expression of the C++ type of TYPE.
 
     The value is spelled as a construction of its type,
-    so that it can be used where the type has to match exactly.
+    so that it fits where the type has to match exactly.
     """
     if type is ScalarType.bool:
         literal = "true" if value else "false"
@@ -207,13 +207,14 @@ def arrow_type_expression(
     """
     Return the expression constructing the Arrow type that TYPE is stored as.
 
-    An aggregate type becomes the Arrow type of the Parquet shape it declares:
-    a LIST for a vector, a MAP for a map and a plain group for a struct,
-    each named the way a writer of this specification names it.
+    An aggregate type becomes the Arrow type of the Parquet shape it declares.
+    That is a LIST for a vector, a MAP for a map,
+    and a plain group for a struct.
+    Each one is named the way a writer of this specification names it.
 
     KEY is the flattened key that reaches TYPE,
-    and NAMES_IN_FILE renames the fields of a struct below it,
-    so that a writer builds the names that the file is to carry
+    and NAMES_IN_FILE renames the fields of a struct below it.
+    A writer then builds the names that the file is to carry,
     rather than the names the specification uses.
     """
     if isinstance(type, ScalarType):
@@ -250,11 +251,12 @@ class TypeNode:
     """
     One part of a table, and everything the generated code says about it.
 
-    The nodes of a table form the tree that its flattened keys name:
-    a column at the root, a field of a struct, the element of a vector,
-    and the key and the value of a map below it.
-    A reader and a writer walk that tree
-    instead of walking the specification a second time.
+    The nodes of a table form the tree that its flattened keys name.
+    A column sits at the root.
+    Below it sit a field of a struct, the element of a vector,
+    and the key and the value of a map.
+    A reader and a writer walk that tree,
+    rather than the specification a second time.
     """
 
     # One of `scalar`, `vector`, `map` and `struct`.
@@ -267,8 +269,8 @@ class TypeNode:
     cpp: str
     arrow: str
 
-    # The C++ name of the column or the field, and the name the file gives it,
-    # both empty for the parts that a file matches by position.
+    # The C++ name of the column or the field, and the name the file gives it.
+    # Both are empty for the parts that a file matches by position.
     member: str = ""
     name_in_file: str = ""
 
@@ -346,8 +348,8 @@ def build_node(
         )
 
     if isinstance(aggregate, Map):
-        # A key of a MAP is never null and is never named by a specification,
-        # so it is no flat key of its own, though it is read and written.
+        # A key of a MAP is never null and is never named by a specification.
+        # It is no flat key of its own, though it is read and written.
         return TypeNode(
             kind="map",
             key_node=below("key", aggregate.key),
@@ -373,10 +375,10 @@ def table_nodes(
     Return one node per column of TABLE that GENERATED uses,
     in declaration order.
 
-    GENERATED is the reader or the writer that the nodes are built for;
-    the names in the file of either one are read off it,
-    the defaults of a reader with them,
-    and the columns that a writer leaves out are left out here.
+    GENERATED is the reader or the writer that the nodes are built for.
+    The names in the file of either one are read off it,
+    and the defaults of a reader with them.
+    The columns that a writer leaves out are left out here.
     """
     aggregates = aggregates or {}
 
@@ -607,8 +609,8 @@ def hdf5_filters(hdf5_writer: Hdf5Writer) -> list[str]:
     Return the statements putting the filters of HDF5_WRITER on `plist`.
 
     They come out in the order the filters are applied,
-    which is the order they are added in,
-    so the shuffle filter is added before the compressor it feeds.
+    which is the order they are added in.
+    The shuffle filter is therefore added before the compressor it feeds.
     """
     lines: list[str] = []
     if hdf5_writer.shuffle:
@@ -640,8 +642,9 @@ def hdf5_includes(dataset: Dataset) -> Includes:
     """Return the headers that an HDF5 reader or writer of DATASET needs."""
     std = {"array", "cstddef", "span", "stdexcept", "string"}
 
-    # A column major dataset of rank two or more is transposed as it is
-    # read or written, which needs a buffer and the index arithmetic over it.
+    # A column major dataset of rank two or more is transposed
+    # as it is read or written.
+    # That needs a buffer and the index arithmetic over it.
     if dataset.column_major and dataset.ndim > 1:
         std |= {"cstdint", "vector"}
 
@@ -676,8 +679,8 @@ def render_csv_reader(csv_reader: CsvReader, table: Table) -> str:
     """
     Return the C++ definition of CSV_READER.
 
-    TABLE is the table that CSV_READER fills in;
-    a CSV holds no aggregate type, so its columns are all scalars.
+    TABLE is the table that CSV_READER fills in.
+    A CSV holds no aggregate type, so its columns are all scalars.
     """
     columns = table_nodes(table, None, csv_reader)
     template = ENVIRONMENT.get_template("csv_reader.hpp.jinja")
@@ -693,7 +696,7 @@ def render_parquet_reader(
     Return the C++ definition of PARQUET_READER.
 
     TABLE is the table that PARQUET_READER fills in,
-    and AGGREGATES holds every aggregate type that its columns may name.
+    and AGGREGATES holds every aggregate type that its columns can name.
     """
     columns = table_nodes(table, aggregates, parquet_reader)
     template = ENVIRONMENT.get_template("parquet_reader.hpp.jinja")
@@ -710,8 +713,8 @@ def render_csv_writer(csv_writer: CsvWriter, table: Table) -> str:
     """
     Return the C++ definition of CSV_WRITER.
 
-    TABLE is the table that CSV_WRITER writes out;
-    a CSV holds no aggregate type, so its columns are all scalars.
+    TABLE is the table that CSV_WRITER writes out.
+    A CSV holds no aggregate type, so its columns are all scalars.
     """
     columns = table_nodes(table, None, csv_writer)
     template = ENVIRONMENT.get_template("csv_writer.hpp.jinja")
@@ -727,12 +730,12 @@ def render_parquet_writer(
     Return the C++ definition of PARQUET_WRITER.
 
     TABLE is the table that PARQUET_WRITER writes out,
-    and AGGREGATES holds every aggregate type that its columns may name.
+    and AGGREGATES holds every aggregate type that its columns can name.
     """
     columns = table_nodes(table, aggregates, parquet_writer)
 
-    # A scalar column is built by a builder of its own, one batch at a time,
-    # so only the columns that hold an aggregate type need a builder
+    # A scalar column is built by a builder of its own, one batch at a time.
+    # Only the columns that hold an aggregate type need a builder
     # that lives as long as the writer and holds the builders below it.
     builders = nodes_below(column for column in columns if column.kind != "scalar")
 
@@ -775,8 +778,10 @@ def spec_parts(spec: Spec) -> tuple[Includes, list[str]]:
     Return the headers that SPEC needs and the C++ definitions it declares.
 
     The definitions come out in an order in which each one is declared
-    after everything it names,
-    so tables and datasets lead and the classes over them follow.
+    after everything it names.
+    Aggregate types therefore lead,
+    tables and datasets follow them,
+    and the classes over those come last.
     """
     tables = {table.name: table for table in spec.tables}
     datasets = {dataset.name: dataset for dataset in spec.datasets}
@@ -839,8 +844,8 @@ def render_spec(spec: Spec, spec_file: Path) -> str:
     """
     Return the contents of the single C++ header holding all of SPEC.
 
-    SPEC_FILE is the specification that SPEC was parsed from;
-    it is named in the banner of the generated header.
+    SPEC_FILE is the specification that SPEC was parsed from.
+    It is named in the banner of the generated header.
     """
     includes, definitions = spec_parts(spec)
 

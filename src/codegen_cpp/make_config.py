@@ -79,7 +79,7 @@ class Column(NamedTuple):
     """One column of a data file, or one field of a group inside it."""
 
     # The name the table gives the column, always a C++ identifier,
-    # and the name the file gives it, which may be anything at all.
+    # and the name the file gives it, which can be anything at all.
     name: str
     name_in_file: str
 
@@ -159,9 +159,9 @@ def identifier(name: str, fallback: str) -> str:
     """
     Return NAME as a C++ identifier, or FALLBACK if nothing is left of it.
 
-    Everything that may not appear in an identifier becomes an underscore,
-    a run of underscores becomes one,
-    and the underscores at either end are dropped,
+    Everything that cannot appear in an identifier becomes an underscore,
+    and a run of underscores becomes one.
+    The underscores at either end are dropped,
     so that a name of punctuation alone falls back
     rather than becoming underscores alone.
     """
@@ -183,9 +183,9 @@ def unique(names: Iterable[str]) -> list[str]:
     """
     Return NAMES with the repeated ones numbered apart, in order.
 
-    Two names of a file may become one identifier,
-    which a table may not declare twice,
-    so the second one and every one after it is numbered.
+    Two names of a file can become one identifier,
+    which a table cannot declare twice.
+    The second one and every one after it is numbered.
     """
     taken: set[str] = set()
     return [reserve(name, taken) for name in names]
@@ -257,8 +257,8 @@ def table_columns(
     """
     Return one column per field of FIELDS, named the way a table names one.
 
-    The types are left as pyarrow read them,
-    because a CSV holds nothing but scalars
+    The types are left as pyarrow read them.
+    A CSV holds nothing but scalars,
     and a Parquet file needs the walk below to turn a group into a type.
     """
     check_names_in_file(data_file, (field.name for field in fields), where)
@@ -286,12 +286,12 @@ def read_csv_columns(data_file: Path, read_all: bool = False) -> list[Column]:
     The names and the types are the ones pyarrow reads off the file,
     and the compression is guessed from the name of the file.
 
-    The types are inferred from the first block of the file,
-    which is the whole of a small one and the beginning of a large one,
-    so a column that changes character further down is typed by its head.
+    The types are inferred from the first block of the file.
+    That block is the whole of a small file, and the head of a large one.
+    A column that changes character further down is typed by its head.
     READ_ALL infers them from every row instead,
-    which types such a column by all of it
-    at the cost of holding the whole file in memory.
+    which types such a column by all of it.
+    The cost is that the whole file is held in memory.
     """
     # pyarrow is only needed to read a data file,
     # so it is imported here rather than by every other command.
@@ -347,8 +347,8 @@ def build_type(arrow_type: Any, key: str, walk: Walk) -> ScalarType | str:
     Return what the part of a table that KEY names holds.
 
     A group of the file becomes an aggregate type named after the key,
-    declared below the types it is built out of,
-    and a scalar becomes itself and takes a default.
+    declared below the types it is built out of.
+    A scalar becomes itself and takes a default.
     Anything else throws, because a table has no way to hold it.
     """
     import pyarrow as pa
@@ -398,7 +398,7 @@ def build_type(arrow_type: Any, key: str, walk: Walk) -> ScalarType | str:
                     arrow_type=str(field.type),
                 )
             )
-            # A field of a group is named by the file, so it may be renamed.
+            # A field of a group is named by the file, so a rename reaches it.
             if member != field.name:
                 walk.name_in_file.append((below, field.name))
 
@@ -409,8 +409,8 @@ def build_type(arrow_type: Any, key: str, walk: Walk) -> ScalarType | str:
 
     scalar = scalar_of(arrow_type)
 
-    # Only a key that ends at a scalar takes a default;
-    # a null aggregate is read as the empty value of its own type.
+    # Only a key that ends at a scalar takes a default.
+    # A null aggregate is read as the empty value of its own type.
     walk.defaults.append((key, DEFAULT_VALUES[scalar]))
     return scalar
 
@@ -432,10 +432,10 @@ def parquet_config(data_file: Path) -> Config:
     Return the specification that describes the Parquet file DATA_FILE.
 
     A column of a group becomes an aggregate type of its own,
-    named after the flattened key that reaches it,
-    and a column the file stores as something no table can hold is left out
-    rather than declared as something it is not,
-    because a Parquet reader matches the type of what it reads exactly.
+    named after the flattened key that reaches it.
+    A column the file stores as something no table can hold is left out,
+    rather than declared as something it is not.
+    A Parquet reader matches the type of what it reads exactly.
     """
     fields = read_parquet_schema(data_file)
     check_names_in_file(data_file, (field.name for field in fields), "column")
@@ -450,7 +450,7 @@ def parquet_config(data_file: Path) -> Config:
     for index, field in enumerate(fields):
         member = reserve(identifier(field.name, f"column_{index + 1}"), members)
 
-        # A column is built on its own, so one the table cannot hold
+        # A column is built on its own, so one that the table cannot hold
         # takes nothing with it when it is left out.
         scratch = new_walk(walk.taken)
         try:
@@ -556,9 +556,9 @@ def render_member(column: Column, note_type: bool) -> str:
     """
     Return COLUMN as one entry of a list of columns or of fields.
 
-    NOTE_TYPE says whether to note what the file stores the part as,
-    which is worth saying only where the part settled for something else:
-    a group that becomes an aggregate type is held exactly,
+    NOTE_TYPE says whether to note what the file stores the part as.
+    That is worth saying only where the part settled for something else.
+    A group that becomes an aggregate type is held exactly,
     and says nothing.
     """
     line = (
@@ -621,8 +621,9 @@ def render_config(config: Config) -> str:
     Return CONFIG as the text of a specification.
 
     It declares the aggregate types the columns need,
-    the table that the file is read into,
-    a reader that reads it, and a writer that writes it back out.
+    and the table that the file is read into.
+    It also declares a reader that reads it,
+    and a writer that writes it back out.
     """
     lines = [
         f"# Generated by codegen-cpp from '{config.data_file.name}'.",
