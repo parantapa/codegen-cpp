@@ -1,8 +1,8 @@
 // Integration test for the aggregate types.
 // It writes a Parquet file with the generated writer,
-// reads it back with the generated readers,
-// and writes one holding a null at every level with Arrow
-// to check the defaults that the readers stand in for them.
+// and reads it back with the generated readers.
+// It also writes a file with Arrow that holds a null at every level.
+// The test checks the defaults that the readers use in place of those nulls.
 
 #include <cstdio>
 #include <memory>
@@ -49,7 +49,8 @@ bool contains(const std::string& text, const std::string& part) {
     return text.find(part) != std::string::npos;
 }
 
-// Fill in two rows, one holding a value of every shape and one holding none.
+// Fill in two rows,
+// one that holds a value of every shape and one that holds none.
 void fill_rows(T& table) {
     table.push_back(T::row_type{
         .id = 1,
@@ -71,8 +72,8 @@ void fill_rows(T& table) {
     });
 }
 
-// Write a file whose every nested part holds a null somewhere:
-// a null element, a null field, a null value,
+// Write a file in which every nested part holds a null somewhere.
+// The nulls are a null element, a null field, a null value,
 // and a null vector, struct and map of their own.
 void write_nulls(const std::string& path) {
     auto* pool = arrow::default_memory_pool();
@@ -176,8 +177,8 @@ void test_names_in_file(const std::string& path) {
     CHECK(read.spots.at(1).empty());
 }
 
-// A writer writes the names that the file is to carry,
-// so a reader of the file finds them under those names
+// A writer writes the names that the file carries.
+// So a reader of the file finds the columns under those names,
 // and the writer's own reader reads them back.
 void test_writes_names_in_file(const std::string& path) {
     U written;
@@ -216,8 +217,9 @@ void test_writes_names_in_file(const std::string& path) {
     CHECK(again.spots == written.spots);
 }
 
-// A null is read as the default of the part holding it,
-// and a null aggregate as the empty value of its own type.
+// A null is read as the default of the part that holds it.
+// A null vector or map is read as an empty one,
+// and a null struct as the defaults of its fields.
 void test_defaults(const std::string& path) {
     write_nulls(path);
 
@@ -243,7 +245,7 @@ void test_missing_column(const std::string& path) {
     CHECK(contains(error, "has no column 'points'"));
 }
 
-// A batch of rows is read at a time, and reading stops at the last row.
+// A batch of rows is read at a time, and the reader stops at the last row.
 void test_batches(const std::string& path) {
     T read;
     TParquetReader reader(path, 1);
@@ -263,6 +265,8 @@ int main() {
     const std::string path = "test_nested.parquet";
     const std::string nulls = "test_nested_nulls.parquet";
 
+    // test_names_in_file and test_batches read the file that test_round_trip writes.
+    // test_missing_column reads the file that test_defaults writes.
     test_round_trip(path);
     test_names_in_file(path);
     test_writes_names_in_file("test_nested_renamed.parquet");

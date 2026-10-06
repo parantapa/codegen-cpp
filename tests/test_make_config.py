@@ -44,7 +44,7 @@ def test_identifier_keeps_a_name_that_is_one() -> None:
 
 
 def test_identifier_replaces_what_may_not_appear_in_one() -> None:
-    """Everything an identifier may not hold becomes an underscore."""
+    """Everything that an identifier cannot hold becomes an underscore."""
     assert identifier("Station ID", "x") == "Station_ID"
     assert identifier("temp (C)", "x") == "temp_C"
     assert identifier("a.b/c", "x") == "a_b_c"
@@ -58,7 +58,7 @@ def test_identifier_collapses_and_trims_underscores() -> None:
 
 
 def test_identifier_does_not_begin_with_a_digit() -> None:
-    """An identifier may not begin with a digit."""
+    """An identifier cannot begin with a digit."""
     assert identifier("1st", "x") == "_1st"
     assert identifier("2024 total", "x") == "_2024_total"
 
@@ -137,7 +137,7 @@ def test_toml_string_escapes_what_a_basic_string_may_not_hold() -> None:
 
 
 def test_toml_key_quotes_only_where_it_has_to() -> None:
-    """A key that a bare key may spell is left bare."""
+    """A key that a bare key can spell is left bare."""
     assert toml_key("station_id") == "station_id"
     assert toml_key("_1st") == "_1st"
     assert toml_key("a b") == '"a b"'
@@ -202,13 +202,14 @@ def write_late_change_csv(tmp_path: Path) -> Path:
     Write a CSV whose first column stops being an integer past the first block.
 
     The rows before the change fill more than the block
-    that the types are inferred from by default,
-    so the head of the file and the whole of it disagree about the column.
+    that the types are inferred from by default.
+    As a result, the head of the file and the whole of it disagree about the column.
     """
     data_file = tmp_path / "readings.csv"
     rows = "".join(f"{i},{i}\n" for i in range(150_000))
     data_file.write_text(f"a,b\n{rows}oops,7\n")
 
+    # pyarrow infers the types from a first block of 1 MiB (1 << 20) by default.
     assert data_file.stat().st_size > 1 << 20
     return data_file
 
@@ -346,7 +347,7 @@ def test_csv_config_renames_nothing_where_the_file_names_it_the_way(
 
 
 def test_csv_config_defaults_every_column(tmp_path: Path) -> None:
-    """Every column takes a default, so no column of the file may not be null."""
+    """Every column takes a default, so any column of the file can hold a null."""
     data_file = write_csv(tmp_path)
     spec_file = tmp_path / "readings.toml"
     spec_file.write_text(csv_config(data_file))
@@ -605,7 +606,10 @@ def test_parquet_config_writes_the_names_the_reader_reads(tmp_path: Path) -> Non
 def test_parquet_config_leaves_out_a_column_no_table_can_hold(
     tmp_path: Path,
 ) -> None:
-    """A Parquet reader matches types exactly, so a column it cannot is skipped."""
+    """
+    A Parquet reader matches types exactly,
+    so a column that it cannot match is skipped.
+    """
     import pyarrow as pa
 
     data_file = write_parquet(
@@ -637,7 +641,7 @@ def test_parquet_config_leaves_out_a_group_holding_one(tmp_path: Path) -> None:
     assert [name for name, _ in config.skipped] == ["stamps"]
     assert [column.name for column in config.columns] == ["a"]
 
-    # The vector it would have needed is not declared either.
+    # The vector that the column needs is not declared either.
     assert config.aggregates == []
 
 

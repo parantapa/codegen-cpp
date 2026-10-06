@@ -12,7 +12,7 @@
 
         const H5::DataSet array = group_.openDataSet("{{ nd_array.name }}");
 
-        {# An array stored through a filter that hdf5 loads at run time
+        {# An array stored through a filter that HDF5 loads at run time
            cannot be read back without it. -#}
         if (!array.getCreatePlist().allFiltersAvail()) [[unlikely]] {
             throw std::runtime_error(
@@ -72,7 +72,7 @@
 
                 space.selectHyperslab(H5S_SELECT_SET, count.data(), start.data());
 {%- endmacro %}
-{#- The loops laying the elements of a row major buffer out again. -#}
+{#- The loops that lay the elements of a row-major buffer out again. -#}
 {%- macro scatter_buffer(nd_array) %}
                 std::size_t element = 0;
 {%- for dim in dataset.dims %}
@@ -93,8 +93,8 @@
                 array.read(data._mem_{{ nd_array.name }}.get(),
                            {{ native }});
 {%- else %}
-                {# HDF5 reads the elements in row major order,
-                   but the dataset stores them in column major order,
+                {# HDF5 reads the elements in row-major order,
+                   but the dataset stores them in column-major order,
                    so they are put in place one at a time. -#}
                 std::vector<{{ cpp }}> buffer(data.size());
                 array.read(buffer.data(), {{ native }});
@@ -110,8 +110,8 @@
                 array.read(data._mem_{{ nd_array.name }}.get(),
                            {{ native }}, memory, space);
 {%- else %}
-                {# HDF5 reads the elements in row major order,
-                   but the dataset stores them in column major order,
+                {# HDF5 reads the elements in row-major order,
+                   but the dataset stores them in column-major order,
                    so they are put in place one at a time. -#}
                 std::vector<{{ cpp }}> buffer(data.size());
                 array.read(buffer.data(), {{ native }},
@@ -143,11 +143,11 @@
 class {{ hdf5_reader.name }} {
   public:
     // Open the group group_path of the open HDF5 file file,
-    // and look every array up in it once.
+    // and look every array up in it, to check it before any read.
     // Each of them has to be there,
     // and to be stored with the datatype that the dataset declares for it.
-    // The arrays are looked up again by every read,
-    // so a group written again after the reader was constructed
+    // The arrays are looked up again by every read.
+    // So a group written again after the reader was constructed
     // is read back as it stands rather than as it was.
     {{ hdf5_reader.name }}(H5::H5File& file, const std::string& group_path)
         : group_path_(group_path) {
@@ -165,8 +165,8 @@ class {{ hdf5_reader.name }} {
     {{ hdf5_reader.name }}(const {{ hdf5_reader.name }}&) = delete;
     {{ hdf5_reader.name }}& operator=(const {{ hdf5_reader.name }}&) = delete;
 
-    // Read every array into data, which says by the shape it was allocated
-    // with what shape the file has to hold them in.
+    // Read every array that this reader reads into data.
+    // The shape data was allocated with is the shape the file has to hold.
     void read_dataset({{ dataset.name }}& data) const {
         try {
 {%- for array in arrays -%}
@@ -178,10 +178,11 @@ class {{ hdf5_reader.name }} {
         }
     }
 
-    // Read the part of every array that begins at offset into data,
-    // which is one index per dim of the dataset.
+    // Read into data the part of every array that begins at offset.
+    // The offset holds one index per dim of the dataset.
     // The shape data was allocated with is how much is read,
     // so the file has to hold that much of every array beyond offset.
+    // Throws std::invalid_argument if offset does not hold one index per dim.
     void read_partial_dataset({{ dataset.name }}& data,
                               std::span<const std::size_t> offset) const {
         if (offset.size() != {{ dataset.name }}::rank) [[unlikely]] {

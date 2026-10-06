@@ -1,4 +1,4 @@
-"""Generate the cpp code."""
+"""Generate the C++ code."""
 
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -97,9 +97,10 @@ ARROW_BUILDER_TYPES = {
 }
 
 
-# The HDF5 predefined types describing the memory that an array is read into.
-# They name the layout of the running machine,
-# so the library converts the byte order of the file while it reads.
+# The HDF5 predefined types of the running machine, one per scalar type.
+# A writer creates each array with one of them.
+# A reader or a writer opens an array only where it is stored as exactly that type.
+# An array of another type or byte order is rejected, and is not converted.
 HDF5_NATIVE_TYPES = {
     ScalarType.i8: "H5::PredType::NATIVE_INT8",
     ScalarType.i16: "H5::PredType::NATIVE_INT16",
@@ -116,17 +117,17 @@ HDF5_NATIVE_TYPES = {
 
 # The compression filters that HDF5 loads at run time,
 # by the ID each of them is registered under.
-# `deflate` is built into HDF5, and is asked for by name rather than by ID,
-# so it is not one of these, and neither is `none`.
+# `deflate` is built into HDF5, and a writer asks for it by name rather than by ID.
+# So `deflate` is not one of these, and neither is `none`.
 HDF5_FILTER_IDS = {
     Compression.zstd: 32015,
     Compression.lz4: 32004,
 }
 
-# The level that `deflate` is asked for with where a writer names none,
-# which is the level that HDF5 itself suggests.
-# Every other filter is asked for without a level instead,
-# which leaves it the one the plugin holding it was built with.
+# The level of `deflate` where a writer names no level.
+# HDF5 itself suggests this level.
+# A writer asks for every other filter without a level.
+# That filter then uses the level that its plugin was built with.
 DEFAULT_DEFLATE_LEVEL = 6
 
 
@@ -134,9 +135,8 @@ def cpp_type(type: ScalarType | str) -> str:
     """
     Return the C++ type used to represent TYPE.
 
-    Every aggregate type is written into the header
-    under the name that declares it.
-    The name of one is therefore already the C++ type of it.
+    The header declares every aggregate type under its own name.
+    So the name of an aggregate type is already its C++ type.
     """
     if isinstance(type, str):
         return type
@@ -183,7 +183,7 @@ def cpp_literal(value: DefaultValue, type: ScalarType) -> str:
     """
     Return VALUE as a C++ expression of the C++ type of TYPE.
 
-    The value is spelled as a construction of its type,
+    The expression constructs the type from a literal,
     so that it fits where the type has to match exactly.
     """
     if type is ScalarType.bool:
@@ -191,9 +191,9 @@ def cpp_literal(value: DefaultValue, type: ScalarType) -> str:
     elif type is ScalarType.str:
         literal = cpp_string(str(value))
     elif type in (ScalarType.f32, ScalarType.f64):
-        literal = repr(float(value))  # type: ignore[arg-type]
+        literal = repr(float(value))
     else:
-        literal = repr(int(value))  # type: ignore[arg-type]
+        literal = repr(int(value))
 
     return f"{cpp_type(type)}({literal})"
 
@@ -214,7 +214,7 @@ def arrow_type_expression(
 
     KEY is the flattened key that reaches TYPE,
     and NAMES_IN_FILE renames the fields of a struct below it.
-    A writer then builds the names that the file is to carry,
+    A writer then builds the names that the file carries,
     rather than the names the specification uses.
     """
     if isinstance(type, ScalarType):
@@ -255,8 +255,6 @@ class TypeNode:
     A column sits at the root.
     Below it sit a field of a struct, the element of a vector,
     and the key and the value of a map.
-    A reader and a writer walk that tree,
-    rather than the specification a second time.
     """
 
     # One of `scalar`, `vector`, `map` and `struct`.
@@ -278,7 +276,7 @@ class TypeNode:
     # below the part that holds it.
     step: str = ""
 
-    # Whether a scalar is read out of its array by GetString rather than Value.
+    # Whether a scalar is read out of its array by `GetString` rather than `Value`.
     is_string: bool = False
 
     # Scalars alone are read out of an Arrow array and built into one.
@@ -349,7 +347,8 @@ def build_node(
 
     if isinstance(aggregate, Map):
         # A key of a MAP is never null and is never named by a specification.
-        # It is no flat key of its own, though it is read and written.
+        # It has no flattened key of its own,
+        # but the generated code reads and writes it.
         return TypeNode(
             kind="map",
             key_node=below("key", aggregate.key),
@@ -376,8 +375,8 @@ def table_nodes(
     in declaration order.
 
     GENERATED is the reader or the writer that the nodes are built for.
-    The names in the file of either one are read off it,
-    and the defaults of a reader with them.
+    The nodes take their names in the file from GENERATED.
+    Where GENERATED is a reader, the nodes also take its defaults.
     The columns that a writer leaves out are left out here.
     """
     aggregates = aggregates or {}
@@ -608,9 +607,8 @@ def hdf5_filters(hdf5_writer: Hdf5Writer) -> list[str]:
     """
     Return the statements putting the filters of HDF5_WRITER on `plist`.
 
-    They come out in the order the filters are applied,
-    which is the order they are added in.
-    The shuffle filter is therefore added before the compressor it feeds.
+    HDF5 applies the filters in the order that the statements add them.
+    So the statements add the shuffle filter before the compressor it feeds.
     """
     lines: list[str] = []
     if hdf5_writer.shuffle:
@@ -628,6 +626,8 @@ def hdf5_filters(hdf5_writer: Hdf5Writer) -> list[str]:
         )
         return lines
 
+    # A mandatory filter makes the write fail where the plugin is missing,
+    # rather than store the chunks uncompressed.
     filter_id = HDF5_FILTER_IDS[compression]
     if level is None:
         lines.append(f"plist.setFilter({filter_id}, H5Z_FLAG_MANDATORY);")
@@ -642,8 +642,8 @@ def hdf5_includes(dataset: Dataset) -> Includes:
     """Return the headers that an HDF5 reader or writer of DATASET needs."""
     std = {"array", "cstddef", "span", "stdexcept", "string"}
 
-    # A column major dataset of rank two or more is transposed
-    # as it is read or written.
+    # A reader or a writer of a column major dataset of rank two or more
+    # transposes the arrays as it reads or writes them.
     # That needs a buffer and the index arithmetic over it.
     if dataset.column_major and dataset.ndim > 1:
         std |= {"cstdint", "vector"}
@@ -680,7 +680,7 @@ def render_csv_reader(csv_reader: CsvReader, table: Table) -> str:
     Return the C++ definition of CSV_READER.
 
     TABLE is the table that CSV_READER fills in.
-    A CSV holds no aggregate type, so its columns are all scalars.
+    A CSV file holds no aggregate type, so its columns are all scalars.
     """
     columns = table_nodes(table, None, csv_reader)
     template = ENVIRONMENT.get_template("csv_reader.hpp.jinja")
@@ -714,7 +714,7 @@ def render_csv_writer(csv_writer: CsvWriter, table: Table) -> str:
     Return the C++ definition of CSV_WRITER.
 
     TABLE is the table that CSV_WRITER writes out.
-    A CSV holds no aggregate type, so its columns are all scalars.
+    A CSV file holds no aggregate type, so its columns are all scalars.
     """
     columns = table_nodes(table, None, csv_writer)
     template = ENVIRONMENT.get_template("csv_writer.hpp.jinja")
@@ -734,7 +734,7 @@ def render_parquet_writer(
     """
     columns = table_nodes(table, aggregates, parquet_writer)
 
-    # A scalar column is built by a builder of its own, one batch at a time.
+    # A builder of its own builds a scalar column, one batch at a time.
     # Only the columns that hold an aggregate type need a builder
     # that lives as long as the writer and holds the builders below it.
     builders = nodes_below(column for column in columns if column.kind != "scalar")
@@ -783,6 +783,9 @@ def spec_parts(spec: Spec) -> tuple[Includes, list[str]]:
     tables and datasets follow them,
     and the classes over those come last.
     """
+    # Spec.check_references resolves every name before this runs,
+    # so these lookups cannot fail.
+    # See the developer notes.
     tables = {table.name: table for table in spec.tables}
     datasets = {dataset.name: dataset for dataset in spec.datasets}
     aggregates = {aggregate.name: aggregate for aggregate in spec.aggregates}
@@ -791,7 +794,8 @@ def spec_parts(spec: Spec) -> tuple[Includes, list[str]]:
     definitions: list[str] = []
 
     # An aggregate type is named by the tables that hold it,
-    # and by the types it is built out of, so it leads.
+    # and by the aggregate types built out of it, so the aggregate types lead.
+    # sorted_aggregates puts each one after the aggregate types that it names.
     for aggregate in sorted_aggregates(aggregates):
         includes.append(aggregate_includes(aggregate))
         definitions.append(render_aggregate(aggregate))
@@ -845,7 +849,7 @@ def render_spec(spec: Spec, spec_file: Path) -> str:
     Return the contents of the single C++ header holding all of SPEC.
 
     SPEC_FILE is the specification that SPEC was parsed from.
-    It is named in the banner of the generated header.
+    The banner of the generated header names it.
     """
     includes, definitions = spec_parts(spec)
 
@@ -862,5 +866,5 @@ def render_spec(spec: Spec, spec_file: Path) -> str:
 
 
 def header_file(spec_file: Path) -> Path:
-    """Return the header that SPEC_FILE is generated into unless asked otherwise."""
+    """Return the header that `generate` writes SPEC_FILE into by default."""
     return spec_file.with_suffix(".hpp")

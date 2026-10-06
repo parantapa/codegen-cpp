@@ -23,6 +23,7 @@ class {{ csv_reader.name }} {
 
     // Open csv_file and prepare to read it in batches of batch_size rows.
     // The compression of the file is guessed from its name unless it is given.
+    // Throws std::invalid_argument if batch_size or block_size is not positive.
     {{ csv_reader.name }}(const std::string& csv_file, std::size_t batch_size,
 {{ " " * (csv_reader.name | length + 5) }}bool use_threads = false,
 {{ " " * (csv_reader.name | length + 5) }}std::int32_t block_size = default_block_size,
@@ -80,7 +81,7 @@ class {{ csv_reader.name }} {
     {{ csv_reader.name }}(const {{ csv_reader.name }}&) = delete;
     {{ csv_reader.name }}& operator=(const {{ csv_reader.name }}&) = delete;
 
-    // Return true if read_batch would append at least one row.
+    // Return true if the next call to read_batch appends at least one row.
     bool has_more_batches() {
         fill_batch();
         return batch_ != nullptr;
@@ -172,7 +173,7 @@ class {{ csv_reader.name }} {
         }
     }
 
-    {# Append the first wanted rows that the batch being read still holds
+    {# Append the first wanted rows that the current batch still holds
        to table, and return how many rows that was. -#}
     std::int64_t append_rows({{ table.name }}& table, std::int64_t wanted) {
         const std::int64_t available = batch_->num_rows() - offset_;
@@ -212,12 +213,12 @@ class {{ csv_reader.name }} {
     std::string csv_file_;
     std::size_t batch_size_;
 
-    {# The codec has to outlive the stream decompressing with it,
+    {# The codec has to outlive the stream that decompresses with it,
        so it is declared first and destroyed last. -#}
     std::unique_ptr<arrow::util::Codec> codec_;
     std::shared_ptr<arrow::csv::StreamingReader> reader_;
 
-    {# The batch being read, and the index of its first unread row. -#}
+    {# The current batch, and the index of its first unread row. -#}
     std::shared_ptr<arrow::RecordBatch> batch_;
     std::int64_t offset_ = 0;
 

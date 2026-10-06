@@ -4,9 +4,9 @@ A table holds rows.
 The other half of `codegen-cpp` holds n-dimensional arrays,
 which it calls a dataset,
 and reads and writes them through HDF5.
-In this tutorial we declare a dataset, write it into a file and read it back,
-then lay out an array far larger than the memory we give it
-and fill it in one window at a time.
+In this tutorial, we declare a dataset, write it into a file, and read it back.
+Then we lay out an array far larger than the memory we give it.
+We fill that array in one window at a time.
 We finish by compressing what we write.
 
 This tutorial stands on its own,
@@ -86,7 +86,7 @@ dataset = "Raster"
 `dims` names one dimension per axis,
 so this dataset is rank two and both of its arrays are rank two.
 The names are documentation and the names of the constructor parameters.
-The sizes are chosen when the program runs, not here.
+The program chooses the sizes at run time, not here.
 
 Generate the header:
 
@@ -117,9 +117,9 @@ struct Raster {
 
 Each array is two members: a `std::unique_ptr` that owns the memory,
 and an `mdspan` of the dataset's rank that we read and write through.
-The constructor takes one size per dim.
-Notice that it allocates without initializing the elements,
-so an element has to be written before it is read.
+The constructor takes one size per dimension.
+Notice that it allocates without initializing the elements.
+So we must write an element before we read it.
 
 ## Write the arrays into a file
 
@@ -151,10 +151,10 @@ int main() {
 }
 ```
 
-An element is reached with the C++23 subscript, `tile.elevation[r, c]`,
-one index per dim.
-The writer takes the open file and the path of a group inside it,
-and creates that group, and the group above it, because neither is there yet.
+We reach an element with the C++23 subscript, `tile.elevation[r, c]`,
+one index per dimension.
+The writer takes the open file and the path of a group inside it.
+It creates that group and the group above it, because neither is there yet.
 
 Build and run:
 
@@ -201,16 +201,18 @@ elevation[3, 7] is 37, land_class[3, 7] is 3
 ```
 
 Notice that we allocated `back` ourselves, with the shape we expect.
-A reader fills arrays in rather than sizing them,
-and the shape we gave it is what the file is checked against.
-Ask for a shape the file does not hold and nothing is quietly resized.
-Add these two lines below the ones we just added, and run it again:
+A reader fills arrays in rather than sizing them.
+It checks the file against the shape we gave it.
+If we ask for a shape that the file does not hold,
+the reader does not quietly resize the arrays.
+Add these two lines below the ones we just added:
 
 ```cpp
     Raster wrong(4, 9);
     reader.read_dataset(wrong);
 ```
 
+Run the program again.
 The run ends where the reader gives up:
 
 ```
@@ -223,7 +225,7 @@ Take those two lines out again before going on.
 ## Read one array and leave the other alone
 
 A reader does not have to read every array of its dataset.
-Add one that reads a single array to `terrain.toml`:
+In `terrain.toml`, add a reader that reads a single array:
 
 ```toml
 [[hdf5_reader]]
@@ -232,8 +234,7 @@ dataset = "Raster"
 include = ["elevation"]
 ```
 
-`include` names the arrays that are read,
-and `exclude` is the other way round: it reads every array it does not name.
+`include` names the arrays that the reader reads.
 Use it at the end of `main`:
 
 ```cpp
@@ -263,18 +264,18 @@ elevation[3, 7] is 37, land_class[3, 7] is 99
 ```
 
 The array we left out kept the 99 we put there.
-That is how one group is read in more than one pass,
-and how a program reads the one array it needs
-out of a group holding twenty.
+That is how a program reads one group in more than one pass.
+It is also how a program reads the one array it needs
+out of a group that holds twenty.
 
 ## Lay out an array larger than memory
 
-`write_dataset` writes a dataset we are holding,
+`write_dataset` writes a dataset that we hold in memory,
 so the file can never be larger than what we allocated.
 Two other methods split that in half.
-`create_dataset` lays the arrays out at whatever shape we name
-and writes nothing into them,
-and `write_partial_dataset` fills a block of that shape in.
+`create_dataset` lays the arrays out at whatever shape we name,
+and writes nothing into them.
+`write_partial_dataset` fills in a block of that shape.
 
 Write a raster of a million rows, a window of four thousand rows at a time.
 Replace the body of `main` with this:
@@ -309,11 +310,11 @@ int main() {
 }
 ```
 
-`create_dataset` takes one extent per dim and allocates nothing of ours.
-`offset` says where the window begins, again one index per dim,
+`create_dataset` takes one extent per dimension and allocates nothing of ours.
+`offset` says where the window begins, again one index per dimension,
 and the shape we allocated the window with says how large it is.
-The two together name the block that the window is written into,
-so the loop walks the file 4096 rows at a time
+Together, the two name the block that the writer writes the window into.
+So the loop walks the file 4096 rows at a time,
 in a window that holds 4096 rows.
 
 Build and run:
@@ -368,12 +369,12 @@ where the window we wrote with was four thousand.
 Nothing ties the two together.
 Remember the rule that the two partial methods share.
 A whole read asks the file to have exactly the shape we allocated.
-A partial read asks only for room beyond the offset,
-so the file is free to be larger than the window we take out of it.
+A partial read asks only for room beyond the offset.
+So the file can be larger than the window we take out of it.
 
 ## Compress what we write
 
-A writer can also say how the arrays are laid out in the file.
+A writer can also say how HDF5 lays out the arrays in the file.
 Add one that stores them in chunks and compresses each chunk:
 
 ```toml
@@ -386,20 +387,20 @@ compression_level = 6
 shuffle = true
 ```
 
-`chunk` is the shape of one chunk, one extent per dim.
+`chunk` is the shape of one chunk, one extent per dimension.
 It turns the contiguous layout that a writer uses by default
-into the chunked layout that a filter needs,
-which is why all three of these ask for it.
+into the chunked layout that a filter needs.
+For this reason, the other three keys all ask for it.
 `shuffle` sorts the bytes of the elements by position
-before they are compressed,
-and usually pays for itself on an array of numbers.
+before HDF5 compresses them.
+On an array of numbers, the shuffle usually improves the compression ratio.
 
 Notice that the chunk is the shape of the window we write.
-A chunk is compressed as a unit,
-so a window that covers whole chunks is compressed once,
-where a window covering a part of one
+HDF5 compresses each chunk as a unit.
+So HDF5 compresses a window that covers whole chunks once.
+A window that covers a part of a chunk
 makes HDF5 read that chunk back, unpack it, and pack it again.
-Line the two up whenever a program fills a file this way.
+When a program fills a file this way, line the two up.
 
 Change the one line of `main` that names the writer:
 
@@ -422,33 +423,31 @@ row 500000 starts at 288
 -rw-r--r-- 1 you you 2.5M ... big.h5
 ```
 
-The same 320 MB of arrays now take under three megabytes,
-and the program that reads them did not change at all.
+The same 320 MB of arrays now take under 3 MB.
+The program that reads them did not change at all.
 A reader is unaware of compression,
 because HDF5 decompresses an array as it reads it.
 
 We used `deflate` here, which is built into HDF5 itself.
-The other codecs live in plugins that HDF5 loads when the program runs,
-out of the directories that `HDF5_PLUGIN_PATH` names.
-[The specification](../reference/specification.md) lists them,
-and the [developer notes](../developer-notes.md) say how to build them.
+[The specification](../reference/specification.md) lists the other codecs
+and what each one needs.
 
 ## What we have built
 
-We declared a dataset of two arrays,
-wrote it into a group of an HDF5 file and read it back,
-and read one of its arrays without disturbing the other.
-Then we laid out a 320 MB raster,
-filled it from a window of 1.25 MB,
-read one row back out of the middle of it,
-and compressed the whole thing down to 2.5 MB
-by asking for a chunk and a codec.
+We declared a dataset of two arrays.
+We wrote it into a group of an HDF5 file and read it back.
+We also read one of its arrays without disturbing the other.
+Then we laid out a 320 MB raster and filled it from a window of 1.25 MB.
+We read one row back out of the middle of it.
+Last, we asked for a chunk and a codec,
+which compressed the whole thing down to 2.5 MB.
 
 From here:
 
 - [Store nested columns in a Parquet file](store-nested-columns-in-a-parquet-file.md)
-  is the row oriented half of the tool.
+  is the row-oriented half of the tool.
 - [The specification](../reference/specification.md) lists every option
   a dataset, a reader and a writer take.
-- [The generated code](../reference/generated-code.md) describes what each
-  method checks, and what it reports when a file does not match.
+- [The generated code](../reference/generated-code.md)
+  describes what each method checks,
+  and what it reports when a file does not match.

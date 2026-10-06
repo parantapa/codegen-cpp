@@ -56,7 +56,7 @@ name = "GridChunkedHdf5Writer"
 dataset = "Grid"
 chunk = [1, 2]
 
-# 'deflate' is built into hdf5 and needs no plugin.
+# 'deflate' is built into HDF5 and needs no plugin.
 [[hdf5_writer]]
 name = "GridDeflateHdf5Writer"
 dataset = "Grid"
@@ -65,8 +65,9 @@ compression = "deflate"
 compression_level = 9
 shuffle = true
 
-# 'zstd' is a filter that hdf5 loads at run time,
-# and this chunk reaches past the array, so it is cut down to it.
+# 'zstd' is a filter that HDF5 loads at run time.
+# This chunk reaches past the array,
+# so the writer cuts the chunk down to the array.
 [[hdf5_writer]]
 name = "GridZstdHdf5Writer"
 dataset = "Grid"
@@ -82,7 +83,7 @@ dataset = "Grid"
 chunk = [2, 2]
 compression = "lz4"
 
-# A column major dataset is gathered before it is compressed.
+# A column-major dataset is gathered before it is compressed.
 [[hdf5_writer]]
 name = "FieldZstdHdf5Writer"
 dataset = "Field"

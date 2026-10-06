@@ -74,10 +74,10 @@ def test_parse_csv_readers() -> None:
         "note": "",
     }
 
-    # A reader may leave every column required.
+    # A reader can leave every column required.
     assert spec.csv_readers[1].default == {}
 
-    # A reader may also say what the file calls a column.
+    # A reader can also say what the file calls a column.
     reader = spec.csv_readers[2]
     assert reader.default == {"latitude": 0.0, "longitude": 0.0}
     assert reader.name_in_file == {
@@ -88,7 +88,7 @@ def test_parse_csv_readers() -> None:
 
 @pytest.mark.parametrize("section", ["table", "dataset", "csv_reader"])
 def test_single_table_section_rejected(tmp_path: Path, section: str) -> None:
-    """Sections must be arrays of tables; a plain `[section]` is an error."""
+    """Sections must be arrays of tables. A plain `[section]` is an error."""
     spec_file = tmp_path / "spec.toml"
     spec_file.write_text(f'[{section}]\nname = "x"\n')
 
@@ -124,7 +124,7 @@ arrays = [
 
 
 def test_duplicate_column_names_rejected(tmp_path: Path) -> None:
-    """A table may not declare the same column twice."""
+    """A table cannot declare the same column twice."""
     spec_file = write_spec(
         tmp_path,
         "[[table]]\n"
@@ -138,7 +138,7 @@ def test_duplicate_column_names_rejected(tmp_path: Path) -> None:
 
 
 def test_duplicate_table_names_rejected(tmp_path: Path) -> None:
-    """Two tables may not share a name."""
+    """Two tables cannot share a name."""
     spec_file = write_spec(tmp_path, GOOD_TABLE + GOOD_TABLE)
 
     with pytest.raises(ValidationError, match="duplicate table or reader names: t"):
@@ -146,7 +146,7 @@ def test_duplicate_table_names_rejected(tmp_path: Path) -> None:
 
 
 def test_duplicate_csv_reader_names_rejected(tmp_path: Path) -> None:
-    """Two CSV readers may not share a name."""
+    """Two CSV readers cannot share a name."""
     reader = '[[csv_reader]]\nname = "R"\ntable = "t"\n'
     spec_file = write_spec(tmp_path, GOOD_TABLE + reader + reader)
 
@@ -171,6 +171,7 @@ def test_unknown_table_reference_rejected(tmp_path: Path) -> None:
         ('{ a = "x" }', "expects an integer"),
         ("{ a = true }", "expects an integer"),
         ("{ a = 1.5 }", "expects an integer"),
+        # Larger than the i32 maximum of 2147483647.
         ("{ a = 3000000000 }", "expects an integer between"),
         ("{ b = 1 }", "expects a string"),
     ],
@@ -295,7 +296,7 @@ def test_csv_reader_default_of_the_wrong_type_rejected(tmp_path: Path) -> None:
 def test_csv_reader_name_in_file_for_an_unknown_column_rejected(
     tmp_path: Path,
 ) -> None:
-    """A reader may only rename a column that the table declares."""
+    """A reader can rename only a column that the table declares."""
     spec_file = write_spec(
         tmp_path,
         GOOD_TABLE + "[[csv_reader]]\n"
@@ -315,7 +316,7 @@ def test_csv_reader_name_in_file_for_an_unknown_column_rejected(
 def test_csv_reader_that_reads_two_columns_by_one_name_rejected(
     tmp_path: Path,
 ) -> None:
-    """Renaming may not make two columns of a table share a name."""
+    """A rename cannot make two columns of a table share a name."""
     spec_file = write_spec(
         tmp_path,
         GOOD_TABLE + "[[csv_reader]]\n"
@@ -381,7 +382,7 @@ def test_writer_name_in_file_defaults_to_empty(tmp_path: Path, section: str) -> 
 def test_writer_name_in_file_for_an_unknown_column_rejected(
     tmp_path: Path, section: str, key: str
 ) -> None:
-    """A writer may only rename a part that the table declares."""
+    """A writer can rename only a part that the table declares."""
     spec_file = write_spec(
         tmp_path,
         GOOD_TABLE + f"[[{section}]]\n"
@@ -439,7 +440,7 @@ def test_parquet_writer_name_in_file_for_a_part_matched_by_position_rejected(
 def test_writer_that_writes_two_columns_by_one_name_rejected(
     tmp_path: Path, section: str
 ) -> None:
-    """Renaming may not make two columns of a table share a name."""
+    """A rename cannot make two columns of a table share a name."""
     spec_file = write_spec(
         tmp_path,
         GOOD_TABLE + f"[[{section}]]\n"
@@ -511,7 +512,7 @@ def test_writer_without_include_or_exclude_writes_every_column(
 def test_writer_with_both_include_and_exclude_rejected(
     tmp_path: Path, section: str
 ) -> None:
-    """The two lists say the same thing twice, so only one may be given."""
+    """The two lists say the same thing twice, so a writer can give only one of them."""
     spec_file = write_spec(
         tmp_path,
         GOOD_TABLE + f"[[{section}]]\n"
@@ -529,7 +530,7 @@ def test_writer_with_both_include_and_exclude_rejected(
 
 @pytest.mark.parametrize("kind", ["include", "exclude"])
 def test_writer_with_an_empty_list_rejected(tmp_path: Path, kind: str) -> None:
-    """A list that is given says something, so it may not be empty."""
+    """A list that is given says something, so it cannot be empty."""
     spec_file = write_spec(
         tmp_path,
         GOOD_TABLE + f'[[csv_writer]]\nname = "W"\ntable = "t"\n{kind} = []\n',
@@ -560,7 +561,7 @@ def test_writer_with_a_duplicate_column_rejected(tmp_path: Path, kind: str) -> N
 
 @pytest.mark.parametrize("kind", ["include", "exclude"])
 def test_writer_with_an_unknown_column_rejected(tmp_path: Path, kind: str) -> None:
-    """A list may only name columns of the table the writer refers to."""
+    """A list can name only columns of the table that the writer refers to."""
     spec_file = write_spec(
         tmp_path,
         GOOD_TABLE + "[[parquet_writer]]\n"
@@ -667,7 +668,7 @@ def test_table_without_columns_rejected(tmp_path: Path) -> None:
 
 
 def test_annotated_example_parses() -> None:
-    """The annotated example shows every kind of section."""
+    """The annotated example shows every kind of section over a table."""
     spec = parse_spec(EXAMPLE)
 
     assert [t.name for t in spec.tables] == ["Measurement", "Station"]
@@ -740,7 +741,7 @@ def test_parse_dataset_example_spec() -> None:
 
 
 def test_dataset_example_uses_every_numeric_type() -> None:
-    """The example declares an array of every type a dataset may hold."""
+    """The example declares an array of every type that a dataset can hold."""
     spec = parse_spec(DATASET_EXAMPLE)
     used = {array.type for dataset in spec.datasets for array in dataset.arrays}
 
@@ -773,7 +774,7 @@ def test_dataset_without_arrays_rejected(tmp_path: Path) -> None:
 
 
 def test_duplicate_dims_rejected(tmp_path: Path) -> None:
-    """A dataset may not name the same dimension twice."""
+    """A dataset cannot name the same dimension twice."""
     spec_file = write_spec(
         tmp_path,
         "[[dataset]]\n"
@@ -787,7 +788,7 @@ def test_duplicate_dims_rejected(tmp_path: Path) -> None:
 
 
 def test_duplicate_array_names_rejected(tmp_path: Path) -> None:
-    """A dataset may not declare the same array twice."""
+    """A dataset cannot declare the same array twice."""
     spec_file = write_spec(
         tmp_path,
         "[[dataset]]\n"
@@ -817,7 +818,7 @@ def test_non_numeric_array_type_rejected(tmp_path: Path, scalar: str) -> None:
 
 
 def test_every_numeric_type_accepted(tmp_path: Path) -> None:
-    """An array may hold any of the integer and floating point types."""
+    """An array can hold any of the integer and floating point types."""
     arrays = ", ".join(
         f'{{ name = "a{index}", type = "{scalar.value}" }}'
         for index, scalar in enumerate(NUMERIC_TYPES_IN_ORDER)
@@ -835,7 +836,7 @@ def test_every_numeric_type_accepted(tmp_path: Path) -> None:
 
 
 def test_duplicate_dataset_names_rejected(tmp_path: Path) -> None:
-    """Two datasets may not share a name."""
+    """Two datasets cannot share a name."""
     spec_file = write_spec(tmp_path, GOOD_DATASET + GOOD_DATASET)
 
     with pytest.raises(ValidationError, match="duplicate table or reader names: d"):
@@ -843,7 +844,7 @@ def test_duplicate_dataset_names_rejected(tmp_path: Path) -> None:
 
 
 def test_dataset_and_table_share_one_namespace(tmp_path: Path) -> None:
-    """A dataset may not take the name of a table."""
+    """A dataset cannot take the name of a table."""
     dataset = GOOD_DATASET.replace('name = "d"', 'name = "t"')
     spec_file = write_spec(tmp_path, GOOD_TABLE + dataset)
 
@@ -942,7 +943,7 @@ HDF5_SECTIONS = ["hdf5_reader", "hdf5_writer"]
 def test_hdf5_with_both_include_and_exclude_rejected(
     tmp_path: Path, section: str
 ) -> None:
-    """A reader or writer may not narrow its arrays from both ends."""
+    """A reader or writer cannot narrow its arrays from both ends."""
     spec_file = write_spec(
         tmp_path,
         GOOD_HDF5_DATASET + f"[[{section}]]\n"
@@ -961,7 +962,7 @@ def test_hdf5_with_both_include_and_exclude_rejected(
 def test_hdf5_with_an_empty_list_rejected(
     tmp_path: Path, section: str, kind: str
 ) -> None:
-    """An include or exclude list that is given may not be empty."""
+    """An include or exclude list that is given cannot be empty."""
     spec_file = write_spec(
         tmp_path,
         GOOD_HDF5_DATASET + f"[[{section}]]\n"
@@ -979,7 +980,7 @@ def test_hdf5_with_an_empty_list_rejected(
 def test_hdf5_with_a_duplicate_array_rejected(
     tmp_path: Path, section: str, kind: str
 ) -> None:
-    """An include or exclude list may not name the same array twice."""
+    """An include or exclude list cannot name the same array twice."""
     spec_file = write_spec(
         tmp_path,
         GOOD_HDF5_DATASET + f"[[{section}]]\n"
@@ -997,7 +998,7 @@ def test_hdf5_with_a_duplicate_array_rejected(
 def test_hdf5_with_an_unknown_array_rejected(
     tmp_path: Path, section: str, kind: str
 ) -> None:
-    """An include or exclude list may only name arrays of the dataset."""
+    """An include or exclude list can name only arrays of the dataset."""
     spec_file = write_spec(
         tmp_path,
         GOOD_HDF5_DATASET + f"[[{section}]]\n"
@@ -1041,7 +1042,7 @@ def test_hdf5_with_an_unknown_dataset_rejected(tmp_path: Path, section: str) -> 
 
 
 def test_hdf5_reader_shares_the_one_namespace(tmp_path: Path) -> None:
-    """An HDF5 reader may not take the name of a dataset."""
+    """An HDF5 reader cannot take the name of a dataset."""
     spec_file = write_spec(
         tmp_path,
         GOOD_HDF5_DATASET + '[[hdf5_reader]]\nname = "d"\ndataset = "d"\n',
@@ -1052,7 +1053,7 @@ def test_hdf5_reader_shares_the_one_namespace(tmp_path: Path) -> None:
 
 
 def test_duplicate_hdf5_reader_names_rejected(tmp_path: Path) -> None:
-    """Two HDF5 readers may not share a name."""
+    """Two HDF5 readers cannot share a name."""
     reader = '[[hdf5_reader]]\nname = "r"\ndataset = "d"\n'
     spec_file = write_spec(tmp_path, GOOD_HDF5_DATASET + reader + reader)
 
@@ -1070,7 +1071,7 @@ def test_column_major_defaults_to_false(tmp_path: Path) -> None:
 
 
 def test_column_major_is_kept(tmp_path: Path) -> None:
-    """A dataset may ask for the first dim to vary fastest."""
+    """A dataset can ask for the first dim to vary fastest."""
     spec_file = write_spec(tmp_path, GOOD_DATASET + "column_major = true\n")
 
     spec = parse_spec(spec_file)
@@ -1205,7 +1206,7 @@ def test_hdf5_writer_with_a_chunk_of_the_wrong_rank_rejected(tmp_path: Path) -> 
 def test_hdf5_writer_level_for_a_filter_that_takes_none_rejected(
     tmp_path: Path,
 ) -> None:
-    """A level that the filter would ignore is reported rather than dropped."""
+    """A level that the filter ignores is reported rather than dropped."""
     spec_file = write_spec(
         tmp_path,
         GOOD_DATASET + "[[hdf5_writer]]\n"
@@ -1274,7 +1275,7 @@ def test_parse_hdf5_writers() -> None:
     assert spec.hdf5_writers[2].include == ["mask"]
     assert spec.hdf5_writers[3].exclude == ["mask"]
 
-    # A writer may say how the arrays it writes are laid out.
+    # A writer can say how the arrays it writes are laid out.
     assert spec.hdf5_writers[5].chunk == [65536]
     assert spec.hdf5_writers[5].compression is Compression.none
 
@@ -1286,7 +1287,7 @@ def test_parse_hdf5_writers() -> None:
 
 
 def test_hdf5_classes_hold_the_readers_and_the_writers() -> None:
-    """Readers and writers share the checks that apply to both."""
+    """hdf5_classes holds every HDF5 reader, then every HDF5 writer."""
     spec = parse_spec(DATASET_EXAMPLE)
 
     assert [c.KIND for c in spec.hdf5_classes] == ["hdf5_reader"] * 5 + [
@@ -1310,7 +1311,7 @@ def test_selected_arrays_of_a_writer() -> None:
 
 
 def test_hdf5_writer_shares_the_one_namespace(tmp_path: Path) -> None:
-    """A reader and a writer may not share a name."""
+    """A reader and a writer cannot share a name."""
     spec_file = write_spec(
         tmp_path,
         GOOD_HDF5_DATASET + '[[hdf5_reader]]\nname = "f"\ndataset = "d"\n'
@@ -1374,7 +1375,7 @@ def test_a_column_holds_an_aggregate_type() -> None:
 
 
 def test_sorted_aggregates_declares_a_type_before_the_types_that_name_it() -> None:
-    """The types come out in an order that C++ can be written in."""
+    """The types come out in an order where each type follows the types it names."""
     spec = parse_spec(AGGREGATES)
     aggregates = {aggregate.name: aggregate for aggregate in spec.aggregates}
 

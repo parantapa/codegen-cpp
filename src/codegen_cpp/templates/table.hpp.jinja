@@ -1,4 +1,4 @@
-// Column oriented storage for the table '{{ table.name }}'.
+// Column-oriented storage for the table '{{ table.name }}'.
 struct {{ table.name }} {
     // A single row of the table '{{ table.name }}'.
     struct row_type {
@@ -48,6 +48,8 @@ struct {{ table.name }} {
 {%- endfor %}
     }
 
+    // Return a copy of row i, which is not bounds checked.
+    // The rows are not stored as rows.
     row_type operator[](std::size_t i) const {
         return row_type{
 {%- for column in table.columns %}

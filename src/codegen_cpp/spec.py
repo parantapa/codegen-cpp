@@ -97,10 +97,8 @@ def check_default_value(type: ScalarType, value: DefaultValue) -> str | None:
     return None
 
 
-def parse_type_ref(value: Any) -> Any:
-    """
-    Turn the name of a scalar type into its ScalarType, and leave the rest.
-    """
+def parse_type_ref(value: object) -> object:
+    """Return the ScalarType that VALUE names, or VALUE where it names none."""
     if isinstance(value, str):
         try:
             return ScalarType(value)
@@ -118,8 +116,8 @@ class Member(BaseModel):
 
     A member says what a value is called in C++ and what shape it has,
     and nothing about the file it is read from.
-    The name a reader looks for, and the value it stores for a null,
-    are declared by the reader itself.
+    The reader itself declares the name that it looks for,
+    and the value that it stores for a null.
     """
 
     name: str
@@ -156,12 +154,13 @@ class Map(BaseModel):
     key: ScalarType
     value: TypeRef
 
-    # The pairs are held in a `std::map`, in the order of their keys,
-    # unless is_unordered asks for a `std::unordered_map` instead.
+    # A `std::map` holds the pairs, in the order of their keys.
+    # `is_unordered` asks for a `std::unordered_map` instead.
     is_unordered: bool = False
 
     @model_validator(mode="after")
     def check_key(self) -> "Map":
+        """Reject a key type that is not an integer type or `str`."""
         if self.key not in MAP_KEY_TYPES:
             allowed = ", ".join(
                 scalar.value for scalar in ScalarType if scalar in MAP_KEY_TYPES
@@ -185,6 +184,7 @@ class Struct(BaseModel):
 
     @model_validator(mode="after")
     def check_fields(self) -> "Struct":
+        """Reject a struct with no fields or with two fields of one name."""
         if not self.fields:
             raise ValueError(f"struct '{self.name}' has no fields")
 
@@ -214,7 +214,8 @@ def referenced_types(aggregate: Aggregate) -> list[str]:
 
 def find_type_cycles(aggregates: dict[str, Aggregate]) -> list[list[str]]:
     """
-    Return one cycle per group of aggregate types that contain one another.
+    Return the cycles among the aggregate types,
+    at least one for every group of types that contain one another.
     """
     done: set[str] = set()
     cycles: dict[tuple[str, ...], list[str]] = {}
@@ -246,7 +247,7 @@ def sorted_aggregates(aggregates: dict[str, Aggregate]) -> list[Aggregate]:
     Return the aggregate types in an order that declares each of them
     before the types that name it.
 
-    The declared types have to be acyclic, or this does not terminate.
+    The declared types have to be acyclic, or this raises RecursionError.
     `find_type_cycles` reports the ones that are not.
     """
     ordered: dict[str, Aggregate] = {}
@@ -281,8 +282,8 @@ class FlatKey(NamedTuple):
     # Whether the last step of the key names a column or a field of a struct.
     # That is what a file names in turn,
     # and so what `name_in_file` of a reader can replace.
-    # The element of a vector and the value of a map are matched by position.
-    # Neither one is named by the file or by the specification.
+    # A file matches the element of a vector and the value of a map by position.
+    # Neither the file nor the specification names either one.
     is_named: bool
 
 
@@ -298,12 +299,10 @@ def flatten_table(
     It is `element` for the element of a vector,
     and `value` for the value of a map.
     The key of a map is never a step of its own.
-    A key of a Parquet MAP is never null,
-    and is never matched against the specification.
 
     A type that is not declared stops the walk where it stands,
     and the caller reports it.
-    The declared types have to be acyclic, or this does not terminate.
+    The declared types have to be acyclic, or this raises RecursionError.
     """
     keys: dict[str, FlatKey] = {}
 
@@ -319,6 +318,7 @@ def flatten_table(
         if isinstance(aggregate, Vector):
             walk(f"{key}.{VECTOR_STEP}", aggregate.element, False)
         elif isinstance(aggregate, Map):
+            # A key of a MAP is never null and is never named by a specification.
             walk(f"{key}.{MAP_STEP}", aggregate.value, False)
         else:
             for field in aggregate.fields:
@@ -338,6 +338,7 @@ class Table(BaseModel):
 
     @model_validator(mode="after")
     def check_columns(self) -> "Table":
+        """Reject a table with no columns or with two columns of one name."""
         if not self.columns:
             raise ValueError(f"table '{self.name}' has no columns")
 
@@ -358,6 +359,7 @@ class NdArray(BaseModel):
 
     @model_validator(mode="after")
     def check_type(self) -> "NdArray":
+        """Reject an element type that is not numeric."""
         if self.type not in NUMERIC_TYPES:
             allowed = ", ".join(
                 scalar.value for scalar in ScalarType if scalar in NUMERIC_TYPES
@@ -388,6 +390,7 @@ class Dataset(BaseModel):
 
     @model_validator(mode="after")
     def check_dims(self) -> "Dataset":
+        """Reject a dataset with no dims or with two dims of one name."""
         if not self.dims:
             raise ValueError(f"dataset '{self.name}' has no dims")
 
@@ -400,6 +403,7 @@ class Dataset(BaseModel):
 
     @model_validator(mode="after")
     def check_arrays(self) -> "Dataset":
+        """Reject a dataset with no arrays or with two arrays of one name."""
         if not self.arrays:
             raise ValueError(f"dataset '{self.name}' has no arrays")
 
@@ -421,10 +425,11 @@ class TableClass(BaseModel):
     table: str
 
     # Keyed by the flattened keys of the table that is read or written.
-    # A CSV file holds one column and no level below it,
+    # A CSV file holds columns and no level below them,
     # so a CSV reader or writer keys them by the names of the columns.
-    # A Parquet reader or writer reaches a field of a struct at any depth.
-    # It reaches the element of a vector and the value of a map alike.
+    # A Parquet reader or writer also reaches a field of a struct at any depth.
+    # The element of a vector and the value of a map are matched by position,
+    # so `name_in_file` cannot name either one.
     #
     # `name_in_file` is the name the file gives the part,
     # which a reader looks for and a writer writes.
@@ -437,8 +442,10 @@ class Reader(TableClass):
 
     KIND: ClassVar[str] = "reader"
 
-    # Keyed by the flattened keys of the table that is read,
-    # the way `name_in_file` is.
+    # Keyed by the flattened keys of the table that is read.
+    # A key here has to end at a scalar.
+    # Unlike a key of `name_in_file`, it can end
+    # at the element of a vector or the value of a map.
     # `default` is what the reader stores where the file holds a null,
     # and a null that no default answers for is an error.
     default: dict[str, DefaultValue] = {}
@@ -448,8 +455,8 @@ class Reader(TableClass):
     def check_default_values(cls, data: Any) -> Any:
         """Reject default_values, which default replaced."""
         # The two said the same thing.
-        # A specification that still says it the old way is told so,
-        # rather than read as one that says nothing.
+        # The parser tells a specification that still uses the old key so,
+        # rather than read it as one that says nothing.
         if isinstance(data, dict) and "default_values" in data:
             name = data.get("name")
             where = f" '{name}'" if isinstance(name, str) and name else ""
@@ -480,7 +487,7 @@ def check_selection(
     exclude: list[str] | None,
 ) -> None:
     """
-    Throw unless the include and exclude lists of KIND 'NAME' are usable.
+    Raise ValueError unless the include and exclude lists of KIND 'NAME' are usable.
 
     NOUN is what the two lists name,
     which is what a message about them says they hold.
@@ -507,17 +514,18 @@ class Writer(TableClass):
 
     KIND: ClassVar[str] = "writer"
 
-    # At most one of these is given.
-    # `include` names the columns that are written,
-    # and `exclude` names the columns that are not.
-    # Without either one, every column of the table is written.
-    # A column that is left out is not written at all,
+    # A writer gives at most one of these.
+    # `include` names the columns that the writer writes,
+    # and `exclude` names the columns that it does not write.
+    # Without either one, the writer writes every column of the table.
+    # The writer does not write a left-out column at all,
     # so the file holds the columns of the writer rather than of the table.
     include: list[str] | None = None
     exclude: list[str] | None = None
 
     @model_validator(mode="after")
     def check_include_and_exclude(self) -> "Writer":
+        """Reject both lists at once, an empty list, or a list that repeats a name."""
         check_selection(self.KIND, self.name, "columns", self.include, self.exclude)
         return self
 
@@ -539,7 +547,7 @@ def selected_columns(table: Table, writer: Writer) -> list[Column]:
     Return the columns of TABLE that WRITER writes, in declaration order.
 
     The include and exclude lists of the writer select them.
-    Without either one, every column of the table is written.
+    Without either one, the writer writes every column of the table.
     """
     if writer.include is not None:
         included = set(writer.include)
@@ -592,8 +600,8 @@ class Compression(Enum):
 
 # The range of the levels that a filter takes,
 # for the filters that take one at all.
-# A filter that is not named here is asked for without a level,
-# and compresses the way the plugin holding it was built to.
+# A writer asks for a filter that is not named here without a level.
+# That filter then uses the level that its plugin was built with.
 COMPRESSION_LEVELS = {
     Compression.deflate: (0, 9),
     Compression.zstd: (1, 22),
@@ -605,15 +613,16 @@ class Hdf5Class(DatasetClass):
 
     KIND: ClassVar[str] = "hdf5 class"
 
-    # At most one of these is given.
-    # `include` names the arrays that are used,
-    # and `exclude` names the arrays that are not.
-    # Without either one, every array of the dataset is used.
+    # A reader or a writer gives at most one of these.
+    # `include` names the arrays that it uses,
+    # and `exclude` names the arrays that it does not use.
+    # Without either one, it uses every array of the dataset.
     include: list[str] | None = None
     exclude: list[str] | None = None
 
     @model_validator(mode="after")
     def check_include_and_exclude(self) -> "Hdf5Class":
+        """Reject both lists at once, an empty list, or a list that repeats a name."""
         check_selection(self.KIND, self.name, "arrays", self.include, self.exclude)
         return self
 
@@ -632,15 +641,15 @@ class Hdf5Writer(Hdf5Class):
     # How the arrays are laid out in the file.
     # `chunk` is the shape of one chunk, one extent per dim of the dataset,
     # and every extent of it is at least one.
-    # An extent that reaches past the array it is stored along
-    # is cut down to the array when the file is written.
+    # When the writer writes the file, it shortens an extent
+    # that reaches past its array to the length of that array.
     # One chunk therefore fits a dataset of any size.
     #
     # `compression` names the filter the chunks are compressed with,
     # and `compression_level` tunes it where the filter takes a level.
     # `shuffle` puts the shuffle filter before the compressor,
-    # which usually pays for itself on an array of numbers.
-    # A filter only applies to an array stored in chunks,
+    # which usually makes an array of numbers compress smaller.
+    # A filter applies only to an array stored in chunks,
     # so any of the three asks for `chunk` as well.
     chunk: list[int] | None = None
     compression: Compression = Compression.none
@@ -649,6 +658,7 @@ class Hdf5Writer(Hdf5Class):
 
     @model_validator(mode="after")
     def check_chunk(self) -> "Hdf5Writer":
+        """Reject an empty chunk, an extent below one, or a filter without a chunk."""
         if self.chunk is not None:
             if not self.chunk:
                 raise ValueError(f"{self.KIND} '{self.name}' has an empty chunk")
@@ -675,6 +685,7 @@ class Hdf5Writer(Hdf5Class):
 
     @model_validator(mode="after")
     def check_compression_level(self) -> "Hdf5Writer":
+        """Reject a level the filter does not take, or one outside its range."""
         if self.compression_level is None:
             return self
 
@@ -700,7 +711,7 @@ def selected_arrays(dataset: Dataset, hdf5_class: Hdf5Class) -> list[NdArray]:
     Return the arrays of DATASET that HDF5_CLASS uses, in declaration order.
 
     The include and exclude lists of the reader or writer select them.
-    Without either one, every array of the dataset is used.
+    Without either one, the reader or writer uses every array of the dataset.
     """
     if hdf5_class.include is not None:
         included = set(hdf5_class.include)
@@ -761,12 +772,31 @@ class Spec(BaseModel):
     @model_validator(mode="after")
     def check_references(self) -> "Spec":
         """
-        Check that names are unique
-        and that every reader refers to a defined table and its columns.
+        Check the rules that need more than one section to decide.
+
+        The rules are these:
+
+        - Every name is unique across the tables, the datasets,
+          the aggregate types, and every reader and writer.
+        - Every type that a column or an aggregate type names is declared,
+          and no aggregate type contains itself.
+        - Every reader and writer refers to a declared table or dataset.
+        - A CSV reader or writer uses no column of an aggregate type.
+        - An include or exclude list names only declared columns or arrays,
+          and leaves at least one selected.
+        - A key of `default` or `name_in_file` is one the table holds.
+        - A default is for a scalar and fits its type,
+          and a rename names no part that a file matches by position.
+        - No rename gives two parts of one group the same name.
+        - A chunk has one extent per dim of its dataset.
+
+        Raises ValueError that lists every broken rule.
+        It checks the keys of a table only where no aggregate type contains itself.
         """
         errors: list[str] = []
 
-        # Tables, datasets, aggregate types and readers share one namespace.
+        # Tables, datasets, aggregate types, and every reader and writer
+        # share one namespace.
         names = [table.name for table in self.tables]
         names += [dataset.name for dataset in self.datasets]
         names += [aggregate.name for aggregate in self.aggregates]
@@ -819,7 +849,7 @@ class Spec(BaseModel):
                 continue
 
             # A writer that leaves a column out does not have to hold it,
-            # so only the columns it writes have to fit in a CSV.
+            # so only its written columns have to fit in a CSV file.
             columns = (
                 selected_columns(table, generated)
                 if isinstance(generated, Writer)
@@ -863,7 +893,8 @@ class Spec(BaseModel):
                 )
 
         # A cycle makes the flattened form of a table infinite.
-        # One is reported already, so the keys are only walked without one.
+        # This check reports a cycle already,
+        # so the loop walks the keys only where no cycle exists.
         for reader in self.readers if not cycles else []:
             table = tables.get(reader.table)
             if table is None:

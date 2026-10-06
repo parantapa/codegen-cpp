@@ -1,34 +1,44 @@
 # The specification
 
 A specification is a TOML document
-holding any number of sections of eleven kinds.
-Every section is an array of tables, written `[[table]]`, `[[csv_reader]]`,
-and so on.
+that holds any number of sections of eleven kinds.
+Every section is an array of tables,
+written with double brackets, as in `[[table]]` or `[[csv_reader]]`.
 
-| Section          | What it generates                               |
-| ---------------- | ----------------------------------------------- |
-| `table`          | the struct holding the rows                     |
-| `dataset`        | the struct holding the n-dimensional arrays     |
-| `vector`         | a name for a `std::vector`                      |
-| `map`            | a name for a `std::map` or `std::unordered_map` |
-| `struct`         | a struct of one member per field                |
-| `csv_reader`     | a class reading the table from a CSV file       |
-| `parquet_reader` | a class reading the table from a Parquet file   |
-| `csv_writer`     | a class writing the table to a CSV file         |
-| `parquet_writer` | a class writing the table to a Parquet file     |
-| `hdf5_reader`    | a class reading a dataset from an HDF5 group    |
-| `hdf5_writer`    | a class writing a dataset into an HDF5 group    |
+| Section          | What it generates                                 |
+| ---------------- | ------------------------------------------------- |
+| `table`          | the struct that holds the rows                    |
+| `dataset`        | the struct that holds the n-dimensional arrays    |
+| `vector`         | a name for a `std::vector`                        |
+| `map`            | a name for a `std::map` or `std::unordered_map`   |
+| `struct`         | a struct of one member per field                  |
+| `csv_reader`     | a class that reads the table from a CSV file      |
+| `parquet_reader` | a class that reads the table from a Parquet file  |
+| `csv_writer`     | a class that writes the table to a CSV file       |
+| `parquet_writer` | a class that writes the table to a Parquet file   |
+| `hdf5_reader`    | a class that reads a dataset from an HDF5 group   |
+| `hdf5_writer`    | a class that writes a dataset into an HDF5 group  |
 
 Every section has a `name`,
 which is used verbatim as the name of what it generates.
-A table, a dataset and a struct generate a struct of that name,
-a vector and a map an alias of that name,
-and a reader and a writer a class of that name.
+A table, a dataset and a struct generate a struct of that name.
+A vector and a map generate an alias of that name.
+A reader and a writer generate a class of that name.
 The names of all sections share one namespace and have to be unique.
+
 Every reader and writer of a table names the `table`
 it reads into or writes out.
 Every reader and writer of a dataset names the `dataset`
 it reads into or writes out.
+
+A table needs at least one column.
+A struct needs at least one field.
+A dataset needs at least one dim and one array.
+No two columns, fields, dims or arrays of one section share a name.
+A section written `[table]` rather than `[[table]]` is an error.
+A key that the specification does not know is ignored.
+
+## Tables
 
 A table declares its `columns`,
 each with a name used verbatim as a C++ member name,
@@ -42,9 +52,13 @@ and one of the scalar types:
 | `bool`                    | `bool`                             |
 | `str`                     | `std::string`                      |
 
+## Aggregate types
+
 A column can also name an aggregate type
 declared by a `vector`, a `map` or a `struct` section of the same file.
-The three cover the three shapes a group of a Parquet file can have.
+A type that names neither a scalar type nor such a section is an error.
+The three sections cover the three shapes
+that a group of a Parquet file can have.
 Each one is read from, and written to, that shape and no other:
 
 | Section  | C++                              | Parquet                |
@@ -54,16 +68,17 @@ Each one is read from, and written to, that shape and no other:
 | `struct` | a struct of one member per field | a plain group          |
 
 A `vector` declares the type of one `element`,
-and a `map` the type of its `key` and of its `value`.
+and a `map` declares the type of its `key` and of its `value`.
 A `struct` declares its `fields`, which read like the columns of a table.
 
 A key of a map is one of the integer types or `str`.
 A map can set `is_unordered`,
 which holds the pairs in a `std::unordered_map`.
-That finds a key in constant time,
-and leaves the pairs in an order not worth relying on.
+A `std::unordered_map` finds a key in constant time.
+It leaves the pairs in an unspecified order.
 `is_unordered` defaults to `false`,
 which holds the pairs in the order of their keys.
+A Parquet file whose map holds one key twice is an error when it is read.
 
 An aggregate type can name a scalar type or another aggregate type,
 so the types stack as deep as a file does.
@@ -72,8 +87,11 @@ CSV has no way to hold any of the three.
 A `csv_reader` over a table with such a column,
 or a `csv_writer` that writes one,
 is an error rather than a guess at an encoding.
-Datasets are closed to them for the same reason they are closed to `str`.
+Datasets are closed to them
+for the same reason that they are closed to `str`.
 `examples/table2.toml` shows them.
+
+## Datasets
 
 A dataset declares its `dims`, which name one dimension per axis.
 It also declares its `arrays`,
@@ -89,30 +107,66 @@ which stores the arrays so that the first dim varies fastest.
 so that the last dim varies fastest.
 `examples/dataset1.toml` shows one.
 
+## Flattened keys
+
+For a `csv_reader` or a `csv_writer`,
+a flattened key is the name of a column and nothing else.
+The reason is that a CSV holds no level below one.
+A `parquet_reader` or a `parquet_writer`
+also reaches into a nested column.
+Its key is the name of the column,
+followed by one step for every level below it:
+
+- the name of a field of a struct
+- `element` for the element of a vector
+- `value` for the value of a map
+
+For example, `biblio.first_page` is a field of a struct column,
+and `keywords.element` is one keyword.
+`topics.element.score` is the score of one topic of a vector of them.
+
+## Table readers
+
 A table reader says what it has to say about a file
 one part of the table at a time,
 through `default` and `name_in_file`.
-Each of the two is keyed by the flattened key of the part it names.
+Each of the two is keyed by the [flattened key](#flattened-keys)
+of the part it names.
 
-`default` is the value stored where the file holds a null,
-and a null that no default answers for is an error.
+`default` is the value stored where the file holds a null.
+A null that no default answers for is an error.
 The value has to fit the type of the part it names.
+Earlier versions spelled `default` as `default_values`,
+which is no longer read.
+A reader that still declares it is rejected rather than ignored.
 
-`name_in_file` is the name the file gives the part,
-where that is not the name the specification uses.
-A column awkwardly named in the file
-is then not awkwardly named in every line of C++ that touches it.
+`name_in_file` is the name that the file gives the part,
+where that is not the name that the specification uses.
 A rename that leaves two parts of one group under one name is an error.
+
+`name_in_file` renames only a key
+that ends at a column or at a field of a struct.
+A file matches the rest by position.
+Only a key that ends at a scalar type takes a default.
+A null aggregate is read as the empty value of its own type:
+
+- a vector of no elements
+- a map of no keys
+- a struct whose fields each take their own default
+
+## Table writers
 
 A `csv_writer` and a `parquet_writer` take `name_in_file` as well,
 keyed the same way and read the other way around.
-It is the name the writer gives the part in the file it writes.
+It is the name that the writer gives the part
+in the file that it writes.
 A table read under the names of the specification
-is then written back out under the names the file uses.
+is then written back out under the names that the file uses.
 A writer takes no `default`,
 because a table holds a value for every part of every row it holds.
+A writer ignores a `default` and gives no warning.
 
-A `csv_writer` and a `parquet_writer` can also narrow the columns they write,
+A `csv_writer` and a `parquet_writer` can also narrow the columns that they write,
 with the same two lists that an `hdf5_reader` and an `hdf5_writer` take.
 `include` names the columns that are written,
 and `exclude` names the columns that are not.
@@ -129,35 +183,7 @@ and so is one left with no column at all.
 A `csv_writer` over a table with a column that no CSV can hold
 is fine as long as it leaves that column out.
 
-Earlier versions spelled `default` as `default_values`,
-which is no longer read.
-A specification that still declares it is rejected rather than ignored.
-
-For a `csv_reader` or a `csv_writer`
-a flattened key is the name of a column and nothing else,
-because a CSV holds no level below one.
-A `parquet_reader` or a `parquet_writer`
-reaches into a nested column with the same keys.
-A key is the name of the column,
-followed by one step for every level below it:
-
-- the name of a field of a struct
-- `element` for the element of a vector
-- `value` for the value of a map
-
-So `biblio.first_page` is a field of a struct column,
-and `keywords.element` is one keyword.
-`topics.element.score` is the score of one topic of a vector of them.
-
-`name_in_file` renames only a key
-that ends at a column or at a field of a struct.
-A file matches the rest by position.
-Only a key that ends at a scalar type takes a default.
-A null aggregate is read as the empty value of its own type:
-
-- a vector of no elements
-- a map of no keys
-- a struct whose fields each take their own default
+## HDF5 readers and writers
 
 An `hdf5_reader` or an `hdf5_writer` can narrow the arrays it uses
 with the same two lists, over the arrays of its dataset.
@@ -170,13 +196,15 @@ and it cannot name the same array twice.
 A reader or a writer that declares both lists is an error,
 and so is one left with no array at all.
 
+## Chunking and compression
+
 An `hdf5_writer` can also say how the arrays are laid out in the file.
 `chunk` is the shape of one chunk, one extent per dim of the dataset,
 and every extent of it is at least one.
 It turns the contiguous layout that a writer uses by default
 into the chunked layout that a filter needs.
 An extent that reaches past the array it is stored along
-is cut down to the array when the file is written.
+is reduced to the array when the file is written.
 One chunk therefore fits a dataset of any size.
 
 `compression` names the filter the chunks are compressed with:
@@ -190,14 +218,16 @@ One chunk therefore fits a dataset of any size.
 
 `compression_level` tunes the codecs that take a level,
 and is an error for the ones that do not.
-A codec that takes one and is left without it
-compresses the way the plugin holding it was built to.
+A codec that takes a level and is given none
+uses the default level of the plugin that holds it.
 The exception is `deflate`, which is asked for at level 6.
-`shuffle` puts the shuffle filter before the compressor,
-which sorts the bytes of the elements by position.
-It usually pays for itself on an array of numbers.
-Every one of the three asks for `chunk` as well,
-because a filter only applies to an array stored in chunks.
+
+`shuffle` puts the shuffle filter before the compressor.
+The shuffle filter sorts the bytes of the elements by position.
+The shuffle filter usually improves the compression ratio
+of an array of numbers.
+`compression`, `compression_level` and `shuffle` all need `chunk` as well,
+because a filter applies only to an array stored in chunks.
 
 Everything but `deflate` lives in a plugin
 that HDF5 loads at run time out of the directories
@@ -205,7 +235,8 @@ that the `HDF5_PLUGIN_PATH` environment variable names.
 A program that writes or reads through one
 needs the plugin beside it rather than linked into it.
 The `hdf5_plugins` package builds them.
-The [developer notes](../developer-notes.md) hold the build instructions.
+It comes from the [`pb-conan-index`](https://github.com/parantapa/pb-conan-index) Conan remote.
+The Conan run environment sets `HDF5_PLUGIN_PATH`.
 
 ## Examples
 

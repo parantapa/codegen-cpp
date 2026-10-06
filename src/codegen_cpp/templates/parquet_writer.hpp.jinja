@@ -16,7 +16,8 @@ class {{ parquet_writer.name }} {
     // The number of rows stored in a row group, unless asked otherwise.
     static constexpr std::int64_t default_row_group_length = 128000;
 
-    // Open parquet_file for writing, replacing it if it already exists.
+    // Open parquet_file for writing, and replace it if it already exists.
+    // Throws std::invalid_argument if row_group_length is not positive.
     explicit {{ parquet_writer.name }}(
         const std::string& parquet_file,
         arrow::Compression::type compression = arrow::Compression::ZSTD,
@@ -28,7 +29,7 @@ class {{ parquet_writer.name }} {
                 "row_group_length must be larger than zero");
         }
 
-        {# The columns are written under the names the file is to carry,
+        {# The columns are written under the names that the file carries,
            which are the names of the columns
            unless the writer renames them. -#}
         schema_ = arrow::schema({
@@ -56,13 +57,16 @@ class {{ parquet_writer.name }} {
         try {
             close();
         } catch (...) {
-            {#- A destructor cannot report the failure of close(); #}
+            {#- A destructor cannot report the failure of close(),
+                so it drops the failure here. close() reports it. #}
         }
     }
 
     {{ parquet_writer.name }}(const {{ parquet_writer.name }}&) = delete;
     {{ parquet_writer.name }}& operator=(const {{ parquet_writer.name }}&) = delete;
 
+    // Append the rows of table to the file.
+    // Throws std::runtime_error once the writer is closed.
     void write_batch(const {{ table.name }}& table) {
         if (writer_ == nullptr) [[unlikely]] {
             throw std::runtime_error("'" + parquet_file_ + "' is closed");
@@ -96,16 +100,20 @@ class {{ parquet_writer.name }} {
               "failed to write '" + parquet_file_ + "'");
     }
 
+    // Write out what is left and close the file.
+    // A second call does nothing once a call has returned.
+    // Only close() reports a failure to close. The destructor drops it.
     void close() {
+        {# The move clears the member before Close(),
+           so a Close() that throws leaves the writer closed.
+           Then neither a second close() nor the destructor tries again. -#}
         if (writer_ != nullptr) {
             auto writer = std::move(writer_);
-            writer_.reset();
             check(writer->Close(), "failed to close '" + parquet_file_ + "'");
         }
 
         if (output_ != nullptr) {
             auto output = std::move(output_);
-            output_.reset();
             check(output->Close(), "failed to close '" + parquet_file_ + "'");
         }
     }
@@ -158,7 +166,7 @@ class {{ parquet_writer.name }} {
     std::string parquet_file_;
     std::shared_ptr<arrow::Schema> schema_;
 
-    {# The stream has to outlive the writer using it,
+    {# The stream has to outlive the writer that uses it,
        so it is declared first and destroyed last. -#}
     std::shared_ptr<arrow::io::OutputStream> output_;
     std::unique_ptr<parquet::arrow::FileWriter> writer_;

@@ -2,8 +2,8 @@
 {%- set direct = not dataset.column_major or dataset.ndim == 1 -%}
 {%- set chunked = hdf5_writer.chunk -%}
 {%- macro create_arrays() %}
-    // Create every array of the dataset with the shape extents,
-    // replacing whatever the group holds under the same name already.
+    // Create every array that this writer writes with the shape extents.
+    // Each one replaces whatever the group already holds under the same name.
     void create_arrays(
         const std::array<hsize_t, {{ dataset.name }}::rank>& extents) {
         {# Every array of the dataset has the same shape,
@@ -18,7 +18,7 @@
         std::array<hsize_t, {{ dataset.name }}::rank> chunk = {
 {%- for extent in hdf5_writer.chunk %}{{ extent }}{{ ", " if not loop.last }}{% endfor %}};
         for (std::size_t i = 0; i < {{ dataset.name }}::rank; ++i) {
-            {# A chunk may not reach past the extent it is stored along,
+            {# A chunk cannot reach past the extent it is stored along,
                and an extent of zero still takes a chunk of one. -#}
             if (chunk[i] > extents[i]) {
                 chunk[i] = extents[i];
@@ -69,7 +69,7 @@
         const H5::DataSet array = group_.openDataSet("{{ nd_array.name }}");
 
         {# What goes into an array stored through a filter
-           that hdf5 loads at run time goes through the filter too. -#}
+           that HDF5 loads at run time goes through the filter too. -#}
         if (!array.getCreatePlist().allFiltersAvail()) [[unlikely]] {
             throw std::runtime_error(
                 "'" + path + "' is stored with a filter that is not "
@@ -86,7 +86,7 @@
         return array;
     }
 {%- endmacro %}
-{#- The loops gathering the elements into a row major buffer. -#}
+{#- The loops that gather the elements into a row-major buffer. -#}
 {%- macro gather_buffer(nd_array) %}
                 std::size_t element = 0;
 {%- for dim in dataset.dims %}
@@ -107,8 +107,8 @@
                 array.write(data._mem_{{ nd_array.name }}.get(),
                             {{ native }});
 {%- else %}
-                {# HDF5 writes the elements in row major order,
-                   but the dataset stores them in column major order,
+                {# HDF5 writes the elements in row-major order,
+                   but the dataset stores them in column-major order,
                    so they are gathered one at a time first. -#}
                 std::vector<{{ cpp }}> buffer(data.size());
 {{ gather_buffer(nd_array) }}
@@ -125,8 +125,8 @@
                 array.write(data._mem_{{ nd_array.name }}.get(),
                             {{ native }}, memory, space);
 {%- else %}
-                {# HDF5 writes the elements in row major order,
-                   but the dataset stores them in column major order,
+                {# HDF5 writes the elements in row-major order,
+                   but the dataset stores them in column-major order,
                    so they are gathered one at a time first. -#}
                 std::vector<{{ cpp }}> buffer(data.size());
 {{ gather_buffer(nd_array) }}
@@ -177,10 +177,10 @@
 // into a group of an HDF5 file.
 class {{ hdf5_writer.name }} {
   public:
-    // Open the group group_path of the open HDF5 file file for writing,
-    // creating it and any group above it that is missing.
-    // The file has to be open for writing;
-    // a read-only file is reported like any other failure.
+    // Open the group group_path of the open HDF5 file file for writing.
+    // Create it and any group above it that is missing.
+    // The file has to be open for writing.
+    // A read-only file is reported like any other failure.
     {{ hdf5_writer.name }}(H5::H5File& file, const std::string& group_path)
         : group_path_(group_path) {
         try {
@@ -210,12 +210,12 @@ class {{ hdf5_writer.name }} {
     {{ hdf5_writer.name }}(const {{ hdf5_writer.name }}&) = delete;
     {{ hdf5_writer.name }}& operator=(const {{ hdf5_writer.name }}&) = delete;
 
-    // Write every array of data into the group.
+    // Write every array that this writer writes from data into the group.
     // An array the group already holds under the same name is replaced,
     // whatever shape and datatype it was stored with.
     void write_dataset(const {{ dataset.name }}& data) {
-        {# Every array of the dataset has the shape that data was
-           allocated with. -#}
+        {# Every array of the dataset has the shape
+           that data was allocated with. -#}
         std::array<hsize_t, {{ dataset.name }}::rank> extents;
         for (std::size_t i = 0; i < {{ dataset.name }}::rank; ++i) {
             extents[i] = static_cast<hsize_t>(data.dims[i]);
@@ -232,11 +232,12 @@ class {{ hdf5_writer.name }} {
         }
     }
 
-    // Create every array of the dataset with the shape shape,
+    // Create every array that this writer writes with the shape shape,
     // which is one extent per dim of the dataset, and write nothing into them.
-    // An array that is larger than memory is laid out here
-    // and filled in piece by piece with write_partial_dataset,
-    // where write_dataset asks for the whole of it at once.
+    // Throws std::invalid_argument if shape does not hold one extent per dim.
+    // An array that is larger than memory is laid out here,
+    // and filled in piece by piece with write_partial_dataset.
+    // But write_dataset asks for the whole of it at once.
     // An array the group already holds under the same name is replaced,
     // whatever shape and datatype it was stored with.
     void create_dataset(std::span<const std::size_t> shape) {
@@ -260,10 +261,11 @@ class {{ hdf5_writer.name }} {
 
     // Write data into the part of every array that begins at offset,
     // which is one index per dim of the dataset.
-    // The shape data was allocated with is how much is written,
-    // so the group has to hold every array already,
-    // with room for that much of it beyond offset;
-    // write_dataset and create_dataset are what create them.
+    // The shape data was allocated with is how much is written.
+    // So the group has to hold every array already,
+    // with room for that much of it beyond offset.
+    // write_dataset and create_dataset create them.
+    // Throws std::invalid_argument if offset does not hold one index per dim.
     void write_partial_dataset(const {{ dataset.name }}& data,
                                std::span<const std::size_t> offset) {
         if (offset.size() != {{ dataset.name }}::rank) [[unlikely]] {

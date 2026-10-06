@@ -15,6 +15,7 @@ find_program(
 set(GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 # Regenerate whenever a specification or one of the templates changes.
+# A new template is picked up on the next configure.
 file(GLOB TEMPLATES
      "${CMAKE_CURRENT_SOURCE_DIR}/../../src/codegen_cpp/templates/*.jinja")
 
@@ -57,10 +58,9 @@ add_dependencies(test_hdf5 datasets_header)
 target_include_directories(test_hdf5 PRIVATE "${GENERATED_DIR}")
 target_compile_features(test_hdf5 PRIVATE cxx_std_23)
 target_compile_options(test_hdf5 PRIVATE -Wall -Wextra -Wshadow -Werror)
-# The plugin package holds the filters that hdf5 loads at run time.
-# Linking it adds nothing to the program against a shared hdf5,
-# and against a static one it exports the hdf5 symbols of the program,
-# which is where a filter loaded into it looks them up.
+# The test links the plugin package,
+# so a filter loaded at run time finds the HDF5 symbols.
+# See docs/developer-notes.md.
 target_link_libraries(
     test_hdf5 PRIVATE hdf5::hdf5_cpp std::mdspan hdf5_plugins::hdf5_plugins
 )
@@ -86,13 +86,14 @@ add_test(NAME readers COMMAND test_readers)
 add_test(NAME hdf5 COMMAND test_hdf5)
 add_test(NAME nested COMMAND test_nested)
 
-# The filters that hdf5 loads at run time are found through this path.
+# The filters that HDF5 loads at run time are found through this path.
 set_tests_properties(
     hdf5 PROPERTIES ENVIRONMENT "HDF5_PLUGIN_PATH=${HDF5_PLUGIN_PATH}"
 )
 
-# The same test binary without the plugins, which checks what is reported
-# then; it reads the file that the run above leaves behind.
+# The same test binary without the plugins,
+# which checks what is reported then.
+# It reads the file that the run above leaves behind.
 add_test(NAME hdf5_without_plugins COMMAND test_hdf5 --without-plugins)
 set_tests_properties(
     hdf5_without_plugins PROPERTIES ENVIRONMENT "HDF5_PLUGIN_PATH=" DEPENDS hdf5

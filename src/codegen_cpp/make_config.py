@@ -9,8 +9,9 @@ from .spec import MAP_KEY_TYPES, ScalarType, find_duplicates
 
 # The Arrow types that a column of a table holds as they are,
 # spelled the way pyarrow spells them.
-# Everything else a CSV is read as, a date or a timestamp among them,
-# is read as a string, which Arrow converts to on the way in.
+# Where a CSV file holds a column of any other type,
+# such as a date or a timestamp, the table holds it as a string.
+# Arrow converts the column to a string as it reads the file.
 ARROW_SCALAR_TYPES = {
     "int8": ScalarType.i8,
     "int16": ScalarType.i16,
@@ -86,8 +87,8 @@ class Column(NamedTuple):
     # A scalar type, or the name of an aggregate type declared beside it.
     type: ScalarType | str
 
-    # What pyarrow read the column as,
-    # which is noted where it is not the type the column ends up with.
+    # What pyarrow read the column as.
+    # The specification notes it where it is not the type of the column.
     arrow_type: str
 
 
@@ -134,8 +135,9 @@ class Config(NamedTuple):
     # The aggregate types that the columns name, each declared before use.
     aggregates: list[Aggregate]
 
-    # The flattened keys the reader renames, and the ones it defaults,
-    # in the order the file holds the parts they name.
+    # The flattened keys that the reader renames, and the ones that it defaults,
+    # in the order that the walk reaches them.
+    # That order puts a renamed field of a group before the column that holds it.
     name_in_file: list[tuple[str, str]]
     defaults: list[tuple[str, str]]
 
@@ -144,7 +146,7 @@ class Config(NamedTuple):
 
 
 def reserve(name: str, taken: set[str]) -> str:
-    """Return NAME, numbered apart from the names TAKEN already holds."""
+    """Return NAME, numbered apart from TAKEN, and add the result to TAKEN."""
     candidate = name
     suffix = 1
     while candidate in taken:
@@ -185,7 +187,7 @@ def unique(names: Iterable[str]) -> list[str]:
 
     Two names of a file can become one identifier,
     which a table cannot declare twice.
-    The second one and every one after it is numbered.
+    `unique` numbers the second one and every one after it.
     """
     taken: set[str] = set()
     return [reserve(name, taken) for name in names]
@@ -218,8 +220,8 @@ def config_names(data_file: Path, format: str) -> Names:
     """
     Return the names that the sections generated from DATA_FILE take.
 
-    FORMAT is the reader and writer that is generated, spelled the way
-    the name of a class is, so `Csv` or `Parquet`.
+    FORMAT names the kind of reader and writer,
+    spelled as in the name of a class: `Csv` or `Parquet`.
     """
     table = type_name(base_name(data_file))
 
@@ -231,7 +233,7 @@ def config_names(data_file: Path, format: str) -> Names:
 
 
 def config_file(data_file: Path) -> Path:
-    """Return the specification DATA_FILE is written to unless asked otherwise."""
+    """Return the default path of the specification generated from DATA_FILE."""
     return data_file.with_name(f"{base_name(data_file)}.toml")
 
 
@@ -241,7 +243,11 @@ def type_spelling(type: ScalarType | str) -> str:
 
 
 def check_names_in_file(data_file: Path, names: Iterable[str], where: str) -> None:
-    """Throw unless NAMES, which a reader selects WHERE by, are all different."""
+    """
+    Raise ValueError where two of NAMES are the same.
+
+    WHERE says what NAMES are, such as `column`, for the message.
+    """
     repeated = find_duplicates(names)
     if repeated:
         raise ValueError(
@@ -257,9 +263,11 @@ def table_columns(
     """
     Return one column per field of FIELDS, named the way a table names one.
 
-    The types are left as pyarrow read them.
-    A CSV holds nothing but scalars,
-    and a Parquet file needs the walk below to turn a group into a type.
+    Each type of ARROW_SCALAR_TYPES maps to the scalar type that holds it.
+    Every other type, such as a date or a timestamp, becomes `str`.
+    The type pyarrow read is kept in `arrow_type`.
+    A CSV holds nothing but scalars, so nothing more is needed.
+    A Parquet file needs the walk of `build_type` to turn a group into a type.
     """
     check_names_in_file(data_file, (field.name for field in fields), where)
 
@@ -283,18 +291,18 @@ def read_csv_columns(data_file: Path, read_all: bool = False) -> list[Column]:
     """
     Return one column per column of the CSV file DATA_FILE, in order.
 
-    The names and the types are the ones pyarrow reads off the file,
-    and the compression is guessed from the name of the file.
+    pyarrow reads the names and the types off the file,
+    and guesses the compression from the name of the file.
 
-    The types are inferred from the first block of the file.
+    pyarrow infers the types from the first block of the file.
     That block is the whole of a small file, and the head of a large one.
-    A column that changes character further down is typed by its head.
-    READ_ALL infers them from every row instead,
-    which types such a column by all of it.
-    The cost is that the whole file is held in memory.
+    pyarrow types a column that changes character further down by its head.
+    With READ_ALL, pyarrow infers the types from every row instead.
+    It then types such a column by all of its values.
+    The cost is that the whole file sits in memory.
     """
-    # pyarrow is only needed to read a data file,
-    # so it is imported here rather than by every other command.
+    # Only the reading of a data file needs pyarrow,
+    # so this function imports it, and no other command does.
     import pyarrow.csv
 
     if read_all:
@@ -310,7 +318,7 @@ class Unsupported(Exception):
 
 
 class Walk(NamedTuple):
-    """What building the types of a nested file collects along the way."""
+    """What `build_type` collects as it builds the types of a nested file."""
 
     # The names already declared, which every generated name steps around.
     taken: set[str]
@@ -334,7 +342,7 @@ def merge_walk(walk: Walk, scratch: Walk) -> None:
 
 
 def scalar_of(arrow_type: Any) -> ScalarType:
-    """Return the scalar type ARROW_TYPE is held as, or throw."""
+    """Return the scalar type ARROW_TYPE is held as, or raise Unsupported."""
     scalar = ARROW_SCALAR_TYPES.get(str(arrow_type))
     if scalar is None:
         raise Unsupported(str(arrow_type))
@@ -344,12 +352,13 @@ def scalar_of(arrow_type: Any) -> ScalarType:
 
 def build_type(arrow_type: Any, key: str, walk: Walk) -> ScalarType | str:
     """
-    Return what the part of a table that KEY names holds.
+    Return the type that the part of a table named KEY holds.
 
-    A group of the file becomes an aggregate type named after the key,
-    declared below the types it is built out of.
-    A scalar becomes itself and takes a default.
-    Anything else throws, because a table has no way to hold it.
+    A group of the file becomes an aggregate type named after the key.
+    That type goes into WALK after the types it is built out of.
+    A scalar becomes itself, and its default goes into WALK.
+    Raises Unsupported for anything a table cannot hold,
+    and leaves WALK partly filled.
     """
     import pyarrow as pa
 
@@ -398,7 +407,7 @@ def build_type(arrow_type: Any, key: str, walk: Walk) -> ScalarType | str:
                     arrow_type=str(field.type),
                 )
             )
-            # A field of a group is named by the file, so a rename reaches it.
+            # The file names a field of a group, so a rename reaches it.
             if member != field.name:
                 walk.name_in_file.append((below, field.name))
 
@@ -420,7 +429,7 @@ def read_parquet_schema(data_file: Path) -> list[Any]:
     Return the fields of the Parquet file DATA_FILE, in order.
 
     A Parquet file carries its schema in its footer,
-    so nothing is inferred and nothing but the footer is read.
+    so pyarrow infers nothing and reads only the footer.
     """
     import pyarrow.parquet
 
@@ -433,9 +442,10 @@ def parquet_config(data_file: Path) -> Config:
 
     A column of a group becomes an aggregate type of its own,
     named after the flattened key that reaches it.
-    A column the file stores as something no table can hold is left out,
-    rather than declared as something it is not.
-    A Parquet reader matches the type of what it reads exactly.
+    The result leaves out a column stored as something no table can hold,
+    and lists it in `skipped`.
+    Raises ValueError where two columns share a name,
+    or where a table can hold no column of the file.
     """
     fields = read_parquet_schema(data_file)
     check_names_in_file(data_file, (field.name for field in fields), "column")
@@ -450,9 +460,11 @@ def parquet_config(data_file: Path) -> Config:
     for index, field in enumerate(fields):
         member = reserve(identifier(field.name, f"column_{index + 1}"), members)
 
-        # A column is built on its own, so one that the table cannot hold
-        # takes nothing with it when it is left out.
+        # Each column builds its types into a scratch walk of its own.
+        # So a column that the table cannot hold leaves nothing behind in WALK.
         scratch = new_walk(walk.taken)
+        # A Parquet reader matches the stored type exactly, so the draft
+        # leaves a column out rather than declare it as something it is not.
         try:
             type = build_type(field.type, member, scratch)
         except Unsupported as e:
@@ -494,6 +506,7 @@ def csv_columns_config(data_file: Path, read_all: bool = False) -> Config:
 
     READ_ALL infers the column types from every row of the file
     rather than from its first block.
+    Raises ValueError where the file has no columns, or two of them share a name.
     """
     columns = read_csv_columns(data_file, read_all)
     if not columns:
@@ -536,6 +549,8 @@ TOML_ESCAPES = {
 
 def toml_string(value: str) -> str:
     """Return VALUE as a TOML basic string, quotes and all."""
+    # TOML forbids every raw control character but tab in a basic string.
+    # Tab is escaped as well.
     escaped = "".join(
         TOML_ESCAPES.get(c, c if c >= " " and c != "\x7f" else f"\\u{ord(c):04X}")
         for c in value
@@ -557,9 +572,8 @@ def render_member(column: Column, note_type: bool) -> str:
     Return COLUMN as one entry of a list of columns or of fields.
 
     NOTE_TYPE says whether to note what the file stores the part as.
-    That is worth saying only where the part settled for something else.
-    A group that becomes an aggregate type is held exactly,
-    and says nothing.
+    The note matters only where the type of the part is not what the file stores.
+    An aggregate type holds a group exactly, so a group gets no note.
     """
     line = (
         f"    {{ name = {toml_string(column.name)}, "
@@ -602,8 +616,8 @@ def render_name_in_file(
     """
     Return the section of SECTION that renames the parts NAME_IN_FILE holds.
 
-    COMMENT heads it, and nothing is written at all
-    where the file names every part the way the table does.
+    COMMENT heads the section.
+    Where the file names every part the way the table does, the result is empty.
     """
     if not name_in_file:
         return []
@@ -616,6 +630,8 @@ def render_name_in_file(
     ]
 
 
+# The draft is rendered as text rather than through Jinja or a TOML writer,
+# because a TOML writer drops the comments that the draft carries.
 def render_config(config: Config) -> str:
     """
     Return CONFIG as the text of a specification.
@@ -702,5 +718,6 @@ def csv_config(data_file: Path, read_all: bool = False) -> str:
 
     READ_ALL infers the column types from every row of the file
     rather than from its first block.
+    Raises ValueError where the file has no columns, or two of them share a name.
     """
     return render_config(csv_columns_config(data_file, read_all))

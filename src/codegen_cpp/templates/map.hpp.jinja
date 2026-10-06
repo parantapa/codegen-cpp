@@ -1,5 +1,5 @@
-{#- A map is a name for one of the two keyed containers,
-    which is the one thing is_unordered decides.
+{#- A map is a name for one of the two keyed containers.
+    The choice between them is the one thing that is_unordered decides.
     The Parquet MAP underneath is the same either way. -#}
 {%- set container = "std::unordered_map" if map.is_unordered else "std::map" -%}
 // The map type '{{ map.name }}',

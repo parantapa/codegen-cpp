@@ -84,6 +84,8 @@ def make_config() -> None:
 )
 def make_config_csv(data_file: Path, output_file: Path | None, read_all: bool) -> None:
     """Generate a specification for the CSV file DATA_FILE."""
+    # pyarrow raises its own exception classes as well as ValueError,
+    # so the command reports every failure to read the file the same way.
     try:
         config = csv_config(data_file, read_all)
     except Exception as e:
@@ -111,6 +113,8 @@ def make_config_csv(data_file: Path, output_file: Path | None, read_all: bool) -
 )
 def make_config_parquet(data_file: Path, output_file: Path | None) -> None:
     """Generate a specification for the Parquet file DATA_FILE."""
+    # pyarrow raises its own exception classes as well as ValueError,
+    # so the command reports every failure to read the file the same way.
     try:
         config = parquet_config(data_file)
     except Exception as e:
@@ -118,7 +122,8 @@ def make_config_parquet(data_file: Path, output_file: Path | None) -> None:
 
     write_config(render_config(config), data_file, output_file)
 
-    # A column the table cannot hold is not read, which is worth saying twice.
+    # The specification lists each column that the table cannot hold.
+    # The command prints each one here as well.
     for name, reason in config.skipped:
         console.print(
             f"[yellow]Left out[/yellow] column {name!r}, stored as {reason}",

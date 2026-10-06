@@ -1,21 +1,45 @@
 # Developer notes
 
-Install the package and its development dependencies
-in a virtual environment, and run the tests:
+Install the package and its development dependencies in a virtual environment.
+Then run the tests:
 
 ```bash
 python -m venv .venv
 .venv/bin/pip install -e ".[dev]"
+.venv/bin/codegen-cpp --help
 .venv/bin/pytest
 ```
 
-The project is formatted with `black`,
-and checked with `pycodestyle` and `pyright`.
+To run one test, give its file and its name:
+
+```bash
+.venv/bin/pytest tests/test_spec.py::<test name>
+```
+
+`black` formats the project,
+and `pycodestyle` and `pyright` check it.
+`pyproject.toml` holds the configuration of `black` and `pyright`.
+`setup.cfg` holds the configuration of `pycodestyle`,
+because `pycodestyle` does not read `pyproject.toml`.
+It sets the line length that `black` uses,
+and turns off the checks that disagree with how `black` formats
+a slice and a broken line.
+Before a change goes in, run the three tools in this order:
+
+```bash
+.venv/bin/black src tests
+.venv/bin/pycodestyle src tests
+.venv/bin/pyright
+```
 
 ## The source
 
-- `src/codegen_cpp/cli.py` holds the click commands and nothing else.
-  Each one parses, delegates, and prints where a file was written.
+- `src/codegen_cpp/cli.py` holds the click commands,
+  and the `write_config` helper that the `make-config` commands share.
+  Each command parses, delegates, and prints where a file was written,
+  except `debug parse-spec`, which prints the parsed specification.
+  Its `cli` group is the `codegen-cpp` command,
+  which `pyproject.toml` declares under `[project.scripts]`.
 - `src/codegen_cpp/spec.py` holds the pydantic models of a specification,
   together with every check made on one.
   A specification that parses is a specification the generator can trust.
@@ -28,11 +52,12 @@ and checked with `pycodestyle` and `pyright`.
   per generated construct.
 - `src/codegen_cpp/make_config.py` reads a CSV or a Parquet file
   and writes the first draft of a specification for it.
-  It renders TOML directly rather than through Jinja,
-  because a draft carries comments that a TOML writer drops.
 - `tests/` holds the pytest suite over the Python package,
-  and `tests/cpp/` the CMake project
+  and `tests/cpp/` holds the CMake project
   that compiles and runs the generated code.
+- `docs/` holds the user documentation,
+  as tutorials, how-to guides and reference pages,
+  and these developer notes.
 - `examples/` holds the specifications
   that the documentation points a reader at.
   Each one exercises a part of the tool end to end.
@@ -46,22 +71,23 @@ jinja2 for the templates, and pyarrow for reading a data file.
 A specification is read with `tomllib` from the standard library.
 
 The generated code depends on Apache Arrow,
-on the HDF5 C++ API, and on `mdspan`,
-none of which this package builds or ships.
+on the HDF5 C++ API, and on `mdspan`.
+This package does not build or ship any of them.
 The C++ tests install them with Conan.
 
 ## Design decisions
 
 A specification is validated once, in `spec.py`.
-Every rule about names, types, defaults and selections
-is a pydantic validator, and `Spec.check_references` holds
-the ones that need more than one section to decide.
+Every rule about names, types, defaults and selections is a pydantic validator.
+`Spec.check_references` holds the rules
+that need more than one section to decide.
 The generator therefore indexes tables and datasets by name,
 without checking that they are there.
 A missing name is a bug in the validation,
 rather than something the generator has to answer for.
 
-The templates walk a node tree, not the specification.
+The templates of the readers and the writers of a table walk a node tree,
+rather than the specification.
 `codegen.py` builds one `TypeNode` per part of a table
 before it renders anything.
 A template then asks a node what it holds,
@@ -90,10 +116,14 @@ and orders the definitions so that each one follows what it names.
 ## Testing the generated C++ code
 
 The tests under `tests/cpp` generate a header per specification.
-They write CSV and Parquet files with Arrow,
-and HDF5 files with both the HDF5 C++ API and the generated writers.
+They write each format in two ways:
+
+- CSV files as plain text, and with the generated writers.
+- Parquet files with Arrow, and with the generated writers.
+- HDF5 files with the HDF5 C++ API, and with the generated writers.
+
 Then they read all of them back with the generated readers.
-Arrow, HDF5, `hdf5_plugins` and `mdspan` are installed with Conan.
+Conan installs Arrow, HDF5, `hdf5_plugins` and `mdspan`.
 `conanfile.txt` says which features they are built with.
 Note that Arrow needs C++20 or later,
 which the default Conan profile does not ask for.

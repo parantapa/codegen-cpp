@@ -14,7 +14,6 @@ dependencies = [
     "click",
     "rich",
     "pydantic>=2",
-    "toml",
     "jinja2",
     "pyarrow",
 ]
@@ -50,6 +49,3 @@ typeCheckingMode = "standard"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-
-[tool.pycodestyle]
-max-line-length = 88

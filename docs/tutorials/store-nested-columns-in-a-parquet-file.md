@@ -1,9 +1,9 @@
 # Store nested columns in a Parquet file
 
 A column of a table does not have to hold one number or one string.
-In this tutorial we declare a vector, a map and a struct,
-nest one inside another,
-and write a table of them into a Parquet file and read it back.
+In this tutorial, we declare a vector, a map and a struct,
+and nest one inside another.
+We write a table of them into a Parquet file and read it back.
 Then we read a file that came from somewhere else,
 which names its columns differently and leaves holes in them.
 
@@ -18,8 +18,29 @@ mkdir library
 cd library
 ```
 
-Write the `conanfile.txt` of the first tutorial into this directory,
-and install it:
+Write `conanfile.txt`:
+
+```toml
+[requires]
+arrow/25.0.1
+
+[options]
+arrow/*:parquet=True
+arrow/*:with_csv=True
+arrow/*:with_thrift=True
+arrow/*:with_snappy=True
+arrow/*:with_zlib=True
+arrow/*:with_zstd=True
+
+[generators]
+CMakeDeps
+CMakeToolchain
+
+[layout]
+cmake_layout
+```
+
+Now install it:
 
 ```bash
 conan install . --build=missing -of build -s compiler.cppstd=20
@@ -43,7 +64,7 @@ target_link_libraries(
 
 ## Declare a vector
 
-We are storing papers.
+We store papers.
 A paper has an id and a title, which we already know how to declare,
 and a list of keywords, which we do not.
 Write `works.toml`:
@@ -194,12 +215,12 @@ using CitationsByYear = std::map<std::int64_t, std::uint32_t>;
 ```
 
 A struct is the one shape with members of its own,
-so it is written out as a struct.
-A map is another name for a container,
-and its keys are data rather than specification,
+so the generator writes it out as a struct.
+A map is another name for a container.
+Its keys are data rather than specification,
 so nothing in our file says which years a row holds.
 
-Fill both in for the first row of `main.cpp`:
+Fill both in for the two rows of `main.cpp`:
 
 ```cpp
     works.push_back({
@@ -218,7 +239,7 @@ Fill both in for the first row of `main.cpp`:
     });
 ```
 
-and print them:
+and print them inside the `for` loop, below the keyword loop:
 
 ```cpp
         std::printf("    volume %s, pages %d to %d\n", row.biblio.volume.c_str(),
@@ -247,14 +268,14 @@ cmake --build build/cpp
     volume 3, pages 5 to 19
 ```
 
-A field of a struct is reached as `row.biblio.first_page`,
-and the pairs of the map come back in the order of their keys
+We reach a field of a struct as `row.biblio.first_page`.
+The pairs of the map come back in the order of their keys,
 whatever order they went in.
 
 ## Nest one type inside another
 
-A type can name another type of the same file,
-which is how the deeper shapes are written.
+A type can name another type of the same file.
+That is how we write the deeper shapes.
 A paper has a list of topics, and a topic has a name and a score,
 so a struct goes inside a vector.
 Add both to `works.toml`, above the table:
@@ -278,17 +299,14 @@ and the column:
     { name = "topics", type = "Topics" },
 ```
 
-Notice that we wrote `TopicScore` above the vector that holds it.
-The order of the sections is not what the rule is checked against,
-but a specification read top to bottom is easier to keep.
-Fill the column in for the first row:
+Fill the column in for the first row, below `.citations`:
 
 ```cpp
         .topics = {{.name = "hydrology", .score = 0.81},
                    {.name = "climate", .score = 0.44}},
 ```
 
-and print it:
+and print it inside the `for` loop, below the citations loop:
 
 ```cpp
         for (const auto& topic : row.topics) {
@@ -318,14 +336,14 @@ cmake --build build/cpp
 ```
 
 There is no limit on how deep this goes.
-A vector of vectors, or a struct of vectors of structs,
-is written the same way, one section per level.
+We write a vector of vectors, or a struct of vectors of structs,
+the same way, one section per level.
 
 ## Read a file that came from somewhere else
 
 So far we wrote the file we read,
 so every name lined up and no field was missing.
-Now take a file written by somebody else.
+Now take a file that somebody else wrote.
 Write `make_incoming.py`:
 
 ```python
@@ -354,7 +372,7 @@ table = pa.table(
 pq.write_table(table, "incoming.parquet")
 ```
 
-and run it with the Python that `codegen-cpp` is installed into,
+and run it with the Python where we installed `codegen-cpp`,
 which already has pyarrow:
 
 ```bash
@@ -362,8 +380,8 @@ python make_incoming.py
 ```
 
 This file disagrees with our specification twice.
-It calls two columns and one field of a struct something else,
-and it holds a null in five places where we expect a value.
+It calls two columns and one field of a struct something else.
+It also holds a null in five places where we expect a value.
 A reader answers for both, one part of the table at a time.
 
 Add a second reader to `works.toml`:
@@ -389,10 +407,13 @@ title = "untitled"
 
 Every key here names one part of the table.
 A key is the name of a column,
-followed by one step for each level below it:
-the name of a field for a struct,
-`element` for the element of a vector,
-and `value` for the value of a map.
+followed by one step for each level below it.
+The step for each level is one of these:
+
+- the name of a field, for a struct
+- `element`, for the element of a vector
+- `value`, for the value of a map
+
 So `topics.element.name` is the name of one topic
 of the vector of topics, three levels down.
 
@@ -420,7 +441,7 @@ cmake --build build/cpp
 ./build/cpp/library
 ```
 
-The last two lines of the output are the new file:
+The last four lines of the output are the new file:
 
 ```
 7 Ice shelf retreat (2 keywords, 1 topics)
@@ -431,24 +452,25 @@ The last two lines of the output are the new file:
 
 Notice what happened to the second row.
 Its title was null, so it took the default we gave the column.
-Its whole `biblio` was null,
-and a null struct is read as a struct whose fields each take their own
-default,
-which is why its pages are the -1 we asked for
-rather than a number that would look like a page.
+Its whole `biblio` was null.
+The reader turns a null struct into a struct
+whose fields each take their own default.
+So its pages are the -1 we asked for,
+not a number that looks like a page.
 Its `counts` and `topics` were empty rather than null,
 and an empty vector or map needs no default at all.
 
 Remember that `name_in_file` and `default` belong to the reader
 and not to the type.
-`Topics` is one type, and two readers of it may disagree
+`Topics` is one type.
+Two readers of it can disagree
 about what a file calls it and what a null in it means.
 
 ## Leave a column out
 
 CSV has no way to hold a vector, a map or a struct.
-A `csv_writer` over this table is an error rather than a guess at an encoding,
-unless it writes only the columns that a CSV can hold.
+A `csv_writer` over this table is an error rather than a guess at an encoding.
+The one exception is a writer that writes only the columns a CSV can hold.
 Add one that does:
 
 ```toml
@@ -458,9 +480,8 @@ table = "Work"
 include = ["work_id", "title"]
 ```
 
-`include` names the columns that are written,
-and `exclude` names the columns that are not.
-A column left out is not written at all.
+`include` names the columns that the writer writes.
+The writer does not write a column that `include` leaves out.
 Write the summary out at the end of `main`:
 
 ```cpp
@@ -496,14 +517,16 @@ We declared the three aggregate types,
 nested a struct inside a vector,
 and moved a table of them in and out of a Parquet file.
 We read a file that named three of its parts differently
-and left nulls at four levels,
-and we answered for each of those with one key on one reader.
+and left nulls at four levels.
+We answered for each of those with one key on one reader.
 
 From here:
 
 - [Fill an HDF5 file one window at a time](fill-an-hdf5-file-one-window-at-a-time.md)
   is the other half of the tool: n-dimensional arrays rather than rows.
-- [The specification](../reference/specification.md) gives the rules that
-  the aggregate types, the flattened keys and the two lists follow.
-- [The generated code](../reference/generated-code.md) gives the Parquet
-  shape that each of the three types is read from and written to.
+- [The specification](../reference/specification.md)
+  gives the rules that the aggregate types, the flattened keys,
+  `include` and `exclude` follow.
+- [The generated code](../reference/generated-code.md)
+  gives the Parquet shape
+  that each of the three types is read from and written to.

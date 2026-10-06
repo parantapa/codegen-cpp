@@ -1,7 +1,7 @@
 // Integration test for the generated readers.
 // It writes CSV and Parquet files with Arrow,
-// reads them back with the generated readers,
-// and checks the rows and the errors that the readers report.
+// and reads them back with the generated readers.
+// Then it checks the rows and the errors that the readers report.
 
 #include <cstdio>
 #include <memory>
@@ -124,8 +124,9 @@ void write_parquet(const std::string& path, const std::shared_ptr<arrow::Table>&
              "write parquet");
 }
 
-// Return the names of the columns of a Parquet file, in the order it holds
-// them, read out of the schema that the file carries.
+// Return the names of the columns of a Parquet file,
+// in the order it holds them,
+// read out of the schema that the file carries.
 std::vector<std::string> parquet_columns(const std::string& path) {
     auto maybe_input = arrow::io::ReadableFile::Open(path);
     check_ok(maybe_input.status(), "open parquet input");
@@ -141,7 +142,8 @@ std::vector<std::string> parquet_columns(const std::string& path) {
     return schema->field_names();
 }
 
-// Read every row of the reader in batches, and return the table holding them.
+// Read every row of the reader in batches,
+// and return the table that holds them.
 template <typename Reader>
 Point read_all(Reader& reader, std::size_t expected_batches) {
     Point all;
@@ -230,7 +232,8 @@ void test_csv_reader_compression_can_be_given() {
                           arrow::Compression::GZIP);
     check_reads_the_rows(read_all(reader, 1));
 
-    // Without being told, the reader treats it as plain text and fails.
+    // If the compression is not given,
+    // the reader treats it as plain text and fails.
     CHECK(!error_of([] {
                PointCsvReader plain("compressed.csv", 8);
                Point rows;
@@ -258,7 +261,7 @@ void test_csv_reader_options() {
     CHECK(points.id == (std::vector<std::int64_t>{10, 11, 12, 13, 14}));
     CHECK(points[4].label == "epsilon");
 
-    // A block has to be able to hold something.
+    // The block size has to be larger than zero.
     CHECK(contains(error_of([] { PointCsvReader reader("points.csv", 4, false, 0); }),
                    "block_size must be larger than zero"));
 }
@@ -273,8 +276,9 @@ void test_csv_rejects_a_null_in_a_required_column() {
     CHECK(contains(error, "column 'id' contains null values"));
 }
 
-// The same rows, under the names that PointRenamingCsvReader looks for,
-// in an order of their own and beside a column that the table does not hold.
+// The same rows, under the names that PointRenamingCsvReader looks for.
+// The columns are in an order of their own,
+// next to a column that the table does not hold.
 const std::string kRenamedCsv =
     "Score (mean),flag,Point ID,label,extra\n"
     "1.5,true,10,alpha,x\n"
@@ -411,7 +415,9 @@ void test_parquet_rejects_a_missing_column() {
 }
 
 void test_readers_read_all_of_what_is_left() {
-    // 'points.csv' and 'points.parquet' both hold the five rows of kCsv.
+    // 'points.csv' holds the five rows of kCsv, which test_csv_reads_every_row writes.
+    // 'points.parquet' holds the five rows that test_parquet_reads_every_row writes.
+    // Both tests run before this one.
     PointCsvReader csv_reader("points.csv", 2);
     Point points;
     csv_reader.read_batch(points);
@@ -458,10 +464,10 @@ void test_csv_writer_round_trip() {
         writer.write_batch(more);
 
         writer.close();
-        // Closing twice is allowed.
+        // A second call to close() is not an error.
         writer.close();
 
-        // Writing to a closed writer is an error.
+        // A write to a closed writer is an error.
         CHECK(contains(error_of([&] { writer.write_batch(more); }), "is closed"));
     }
 
@@ -478,7 +484,7 @@ void test_csv_writer_round_trip() {
     CHECK(read_back[1].flag == false);
 }
 
-// A writer writes the names that the file is to carry,
+// A writer writes the names that the file carries,
 // which are the names that the reader of the same file looks for.
 void test_csv_writer_writes_the_names_of_the_file() {
     Point points;
@@ -556,7 +562,7 @@ void test_csv_writer_compresses() {
     CHECK(read_back.size() == 2);
     CHECK(read_back[1].label == "beta");
 
-    // The file really is compressed: it does not start with the header row.
+    // The file really is compressed: it starts with the gzip magic bytes 0x1f 0x8b.
     std::FILE* file = std::fopen("out.csv.data", "rb");
     char start[2] = {0, 0};
     CHECK(std::fread(start, 1, sizeof(start), file) == sizeof(start));
@@ -564,7 +570,7 @@ void test_csv_writer_compresses() {
     CHECK(static_cast<unsigned char>(start[0]) == 0x1f);
     CHECK(static_cast<unsigned char>(start[1]) == 0x8b);
 
-    // Uncompressed can be asked for even when the name suggests otherwise.
+    // A caller can ask for no compression even when the name suggests a codec.
     {
         PointCsvWriter writer("plain_out.csv.gz", arrow::Compression::UNCOMPRESSED);
         writer.write_batch(points);
@@ -614,10 +620,10 @@ void test_parquet_writer_round_trip() {
         writer.write_batch(more);
 
         writer.close();
-        // Closing twice is allowed.
+        // A second call to close() is not an error.
         writer.close();
 
-        // Writing to a closed writer is an error.
+        // A write to a closed writer is an error.
         CHECK(contains(error_of([&] { writer.write_batch(more); }), "is closed"));
     }
 
@@ -633,7 +639,7 @@ void test_parquet_writer_round_trip() {
     CHECK(read_back[1].flag == false);
 }
 
-// A writer writes the names that the file is to carry,
+// A writer writes the names that the file carries,
 // which are the names that the reader of the same file looks for.
 void test_parquet_writer_writes_the_names_of_the_file() {
     Point points;
@@ -656,15 +662,15 @@ void test_parquet_writer_writes_the_names_of_the_file() {
     CHECK(read_back[1].score == 2.5);
     CHECK(read_back[0].flag == true);
 
-    // The file holds the names of the file and not the names of the table,
-    // so the reader that looks for those does not find them.
+    // The file holds the names of the file and not the names of the table.
+    // So the reader that looks for the names of the table does not find them.
     const std::string error = error_of(
         [] { PointParquetReader plain("renamed_written.parquet", 4); });
     CHECK(contains(error, "has no column 'id'"));
 }
 
-// A column that the writer leaves out is not written at all,
-// so a reader of the whole table does not find it in the file.
+// A column that the writer leaves out is not written at all.
+// So a reader of the whole table does not find that column in the file.
 void test_parquet_writer_writes_only_the_columns_it_lists() {
     Point points;
     points.push_back(1, "alpha", 1.5, true);

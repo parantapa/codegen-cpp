@@ -31,6 +31,7 @@ class {{ parquet_reader.name }} {
     static constexpr std::int64_t default_buffer_size = 128 * 1024 * 1024;
 
     // Open parquet_file and prepare to read it in batches of batch_size rows.
+    // Throws std::invalid_argument if batch_size or buffer_size is not positive.
     {{ parquet_reader.name }}(const std::string& parquet_file,
 {{ " " * (parquet_reader.name | length + 5) }}std::size_t batch_size,
 {{ " " * (parquet_reader.name | length + 5) }}std::int64_t buffer_size = default_buffer_size)
@@ -95,7 +96,7 @@ class {{ parquet_reader.name }} {
     {{ parquet_reader.name }}(const {{ parquet_reader.name }}&) = delete;
     {{ parquet_reader.name }}& operator=(const {{ parquet_reader.name }}&) = delete;
 
-    // Return true if read_batch would append at least one row.
+    // Return true if the next call to read_batch appends at least one row.
     bool has_more_batches() {
         fill_batch();
         return batch_ != nullptr;
@@ -263,7 +264,7 @@ class {{ parquet_reader.name }} {
 {%- endfor %}
     }
 {% if nested %}
-    {# Point every part of the table at the array of the batch holding it.
+    {# Point every part of the table at the array of the batch that holds it.
        The arrays below a column belong to the column,
        so they live as long as the batch that is bound here. -#}
     void bind_columns(const arrow::RecordBatch& batch) {
@@ -346,7 +347,7 @@ class {{ parquet_reader.name }} {
 
     {# Read the struct stored in '{{ node.key }}' at row i.
        A null is read as the fields of the struct read one by one,
-       so each of them stands in for it with its own default. -#}
+       so each field stands in for the null with its own default. -#}
     {{ node.cpp }} read_{{ node.var }}(std::int64_t i) const {
         return {{ node.cpp }}{
 {%- for field in node.fields %}
@@ -385,7 +386,7 @@ class {{ parquet_reader.name }} {
         }
     }
 
-    {# Append the first wanted rows that the batch being read still holds
+    {# Append the first wanted rows that the current batch still holds
        to table, and return how many rows that was. -#}
     std::int64_t append_rows({{ table.name }}& table, std::int64_t wanted) {
         const std::int64_t available = batch_->num_rows() - offset_;
@@ -435,7 +436,7 @@ class {{ parquet_reader.name }} {
     std::unique_ptr<parquet::arrow::FileReader> reader_;
     std::unique_ptr<arrow::RecordBatchReader> batches_;
 
-    {# The batch being read, and the index of its first unread row. -#}
+    {# The current batch, and the index of its first unread row. -#}
     std::shared_ptr<arrow::RecordBatch> batch_;
     std::int64_t offset_ = 0;
 
@@ -443,7 +444,7 @@ class {{ parquet_reader.name }} {
     bool done_ = false;
 {%- if nested %}
 
-    {# The arrays of the batch being read,
+    {# The arrays of the current batch,
        one per part of the table that holds a value of its own. -#}
 {%- for node in nodes %}
 {%- if node.kind == "scalar" %}

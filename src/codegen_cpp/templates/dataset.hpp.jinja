@@ -3,7 +3,7 @@
 
 // The arrays of the dataset '{{ dataset.name }}',
 // which all have the shape ({{ dataset.dims | join(", ") }})
-// and are stored in {{ "column" if dataset.column_major else "row" }} major order,
+// and are stored in {{ "column" if dataset.column_major else "row" }}-major order,
 // so '{{ fastest }}' varies fastest.
 struct {{ dataset.name }} {
     static constexpr std::size_t rank = {{ dataset.ndim }};
@@ -18,11 +18,15 @@ struct {{ dataset.name }} {
     // {{ dataset.dims | join(", ") }}.
     std::vector<std::size_t> dims;
 {% for array in dataset.arrays %}
+    {# Owns the elements that the span below views.
+       It is public because the HDF5 readers fill it
+       and the HDF5 writers read it directly. -#}
     std::unique_ptr<{{ array.type | cpp_type }}[]> _mem_{{ array.name }};
     span_type<{{ array.type | cpp_type }}> {{ array.name }};
 {% endfor %}
     // Allocate every array of the dataset with the given shape.
     // The elements are left uninitialized.
+    // Throws std::length_error if the number of elements overflows std::size_t.
     {{ dataset.name }}(
 {%- for dim in dataset.dims %}
         std::size_t {{ dim }}{% if not loop.last %},{% endif %}
@@ -41,6 +45,10 @@ struct {{ dataset.name }} {
 
     {{ dataset.name }}(const {{ dataset.name }}&) = delete;
     {{ dataset.name }}& operator=(const {{ dataset.name }}&) = delete;
+    {# A move keeps every span valid,
+       because the memory that the span views moves with its unique_ptr. -#}
+    {{ dataset.name }}({{ dataset.name }}&&) = default;
+    {{ dataset.name }}& operator=({{ dataset.name }}&&) = default;
 
     // The number of elements of every array of the dataset.
     std::size_t size() const noexcept {

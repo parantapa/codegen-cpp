@@ -60,7 +60,7 @@ def test_table_nodes_without_a_reader() -> None:
 
 
 def test_table_nodes_of_a_csv_reader_carry_its_defaults() -> None:
-    """A column with a default is the one that may hold a null."""
+    """A column with a default is the one that can hold a null."""
     reader = CsvReader(name="R", table="Point", default={"label": ""})
 
     nodes = table_nodes(TABLE, None, reader)
@@ -120,12 +120,12 @@ def test_cpp_string_is_a_filter() -> None:
 
 
 def test_every_numeric_type_has_an_hdf5_spelling() -> None:
-    """Every type that an array may hold maps to an HDF5 predefined type."""
+    """Every type that an array can hold maps to an HDF5 predefined type."""
     assert set(HDF5_NATIVE_TYPES) == NUMERIC_TYPES
 
 
 def test_every_compression_is_asked_for_one_way_or_the_other() -> None:
-    """A filter is either built into hdf5 or loaded by the id it is under."""
+    """A filter is either built into HDF5 or loaded by the id it is under."""
     built_in = {Compression.none, Compression.deflate}
 
     assert built_in | set(HDF5_FILTER_IDS) == set(Compression)
@@ -156,6 +156,7 @@ def test_hdf5_filters_of_a_filter_hdf5_loads_at_run_time() -> None:
     """A filter of a plugin is asked for by its id, and by its level with it."""
     writer = Hdf5Writer(name="w", dataset="D", chunk=[4], compression=Compression.zstd)
 
+    # 32015 is the id registered with the HDF Group for zstd.
     assert hdf5_filters(writer) == ["plist.setFilter(32015, H5Z_FLAG_MANDATORY);"]
 
     with_level = writer.model_copy(update={"compression_level": 7})

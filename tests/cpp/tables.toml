@@ -15,7 +15,7 @@ table = "Point"
 default = { label = "missing", score = -1.5 }
 
 # Reads the same table out of a file that names two of its columns
-# the way no C++ member could be named.
+# the way no C++ member can be named.
 [[csv_reader]]
 name = "PointRenamingCsvReader"
 table = "Point"
@@ -28,7 +28,7 @@ table = "Point"
 default = { label = "missing", score = -1.5 }
 
 # Reads the same table out of a Parquet file that names two of its columns
-# the way no C++ member could be named.
+# the way no C++ member can be named.
 [[parquet_reader]]
 name = "PointRenamingParquetReader"
 table = "Point"

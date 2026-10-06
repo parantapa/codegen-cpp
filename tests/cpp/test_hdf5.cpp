@@ -1,6 +1,6 @@
 // Integration test for the generated HDF5 readers and writers.
-// It writes HDF5 files with the HDF5 C++ API and with the generated writers,
-// reads them back with the generated readers,
+// It writes HDF5 files with the HDF5 C++ API and with the generated writers.
+// Then it reads them back with the generated readers,
 // and checks the arrays and the errors that both of them report.
 
 #include <array>
@@ -20,8 +20,8 @@ namespace {
 int failures = 0;
 
 // The condition is taken as a variadic argument,
-// because the C++23 subscript of an mdspan spells its indices with commas,
-// which the preprocessor would otherwise read as argument separators.
+// because the C++23 subscript of an mdspan spells its indices with commas.
+// Otherwise the preprocessor reads those commas as argument separators.
 #define CHECK(...)                                                              \
     do {                                                                        \
         if (!(__VA_ARGS__)) {                                                    \
@@ -46,9 +46,9 @@ bool contains(const std::string& text, const std::string& part) {
 }
 
 // Open a reader on the group path of file and read it into data.
-// A reader reports a missing or ill stored array as it is constructed,
-// and a shape that does not match as it reads,
-// so a test of either one goes through this.
+// A reader reports a missing or ill-stored array as it is constructed,
+// and a shape that does not match as it reads.
+// So a test of either error goes through this function.
 template <typename Reader, typename Data>
 void read_into(H5::H5File& file, const std::string& path, Data& data) {
     Reader reader(file, path);
@@ -96,7 +96,7 @@ std::int8_t expected_tag(std::size_t x, std::size_t y, std::size_t z) {
 
 // Write values as the dataset called name of group,
 // stored with file_type and handed over as memory_type.
-// The elements of values are in row major order, the order HDF5 stores.
+// The elements of values are in row-major order, the order HDF5 stores.
 template <typename T>
 void write_array(H5::Group& group, const std::string& name,
                  const std::vector<hsize_t>& dims, const H5::DataType& file_type,
@@ -107,7 +107,7 @@ void write_array(H5::Group& group, const std::string& name,
 }
 
 // Write the three arrays of 'Grid' into the group called path of file.
-// The datatypes and the shape may be varied to test what the readers reject.
+// A test can vary the datatypes and the shape to check what the readers reject.
 void write_grid_group(H5::H5File& file, const std::string& path,
                       const H5::DataType& temperature_type = H5::PredType::IEEE_F64LE,
                       const H5::DataType& kind_type = H5::PredType::STD_I32LE,
@@ -155,8 +155,8 @@ void write_field_group(H5::H5File& file, const std::string& path) {
                 H5::PredType::NATIVE_INT8, tag);
 }
 
-// The value written into every element of a grid before it is read,
-// so that an array the reader is asked to skip can be told apart.
+// The value written into every element of a grid before it is read.
+// With it, a test can tell apart an array that the reader is asked to skip.
 constexpr double untouched_temperature = -1.0;
 constexpr std::int32_t untouched_kind = -1;
 constexpr std::uint16_t untouched_count = 65535;
@@ -213,7 +213,7 @@ void check_field_holds_the_expected(const Field& field) {
     }
 }
 
-// Write a file holding '/sim/grid' and '/sim/field', and return its name.
+// Write a file that holds '/sim/grid' and '/sim/field', and return its name.
 std::string write_test_file() {
     const std::string path = "sim.h5";
     H5::H5File file(path, H5F_ACC_TRUNC);
@@ -270,8 +270,9 @@ void test_exclude_reads_every_other_array() {
     }
 }
 
-// 'Field' is stored column major, so the elements have to be laid out again
-// after they are read; an element that lands in the wrong place shows up here.
+// 'Field' is stored column major,
+// so the elements have to be laid out again after they are read.
+// An element that lands in the wrong place shows up here.
 void test_reads_a_column_major_dataset() {
     const std::string path = write_test_file();
     H5::H5File file(path, H5F_ACC_RDONLY);
@@ -312,7 +313,7 @@ void test_reports_a_missing_array() {
     CHECK(contains(error, "'/grid/kind' is not in the HDF5 file"));
 }
 
-// An array that the reader is not asked to read may be absent.
+// An array that the reader is not asked to read can be absent.
 void test_a_skipped_array_may_be_missing() {
     const std::string path = "only_temperature.h5";
     {
@@ -363,8 +364,9 @@ void test_reports_a_rank_that_does_not_match() {
         H5::H5File file(path, H5F_ACC_TRUNC);
         write_grid_group(file, "/grid");
 
-        // One array alone is stored with the wrong rank, so the reader opens
-        // all three and reports the rank as it reads rather than before.
+        // One array alone is stored with the wrong rank,
+        // so the reader opens all three
+        // and reports the rank as it reads rather than before.
         H5::Group group = file.openGroup("/grid");
         group.unlink("temperature");
         const std::vector<hsize_t> dims{grid_rows * grid_cols};
@@ -381,8 +383,9 @@ void test_reports_a_rank_that_does_not_match() {
     CHECK(contains(error, "'/grid/temperature' does not have rank 2"));
 }
 
-// Comparing the datatypes catches every way one can differ,
-// so each of these files is rejected for a different reason
+// The reader compares the datatypes,
+// and that catches every way that two datatypes can differ.
+// So each of these files is rejected for a different reason,
 // and reported the same way.
 void check_grid_datatype_is_rejected(const std::string& path,
                                      const H5::DataType& temperature_type,
@@ -423,8 +426,8 @@ void test_reports_a_datatype_of_the_wrong_signedness() {
         H5::PredType::STD_U16LE, "'/grid/kind' is not stored as 'i32'");
 }
 
-// The byte order is one of the properties that a datatype carries,
-// so an array of the right class, size and signedness is still rejected
+// The byte order is one of the properties that a datatype carries.
+// So an array of the right class, size and signedness is still rejected
 // when it is stored the other way round.
 void test_reports_a_datatype_of_the_wrong_byte_order() {
     check_grid_datatype_is_rejected(
@@ -454,9 +457,10 @@ void test_writes_a_row_major_dataset() {
     check_grid_holds_the_expected(grid);
 }
 
-// 'Field' is stored column major, so the elements are gathered before they
-// are written and laid out again after they are read; an element that takes
-// the wrong turn either way shows up here.
+// 'Field' is stored column major,
+// so the elements are gathered before they are written
+// and laid out again after they are read.
+// An element that takes the wrong turn either way shows up here.
 void test_writes_a_column_major_dataset() {
     const std::string path = "written_field.h5";
     {
@@ -493,7 +497,8 @@ void test_write_creates_the_groups_that_are_missing() {
     check_grid_holds_the_expected(grid);
 }
 
-// Writing over a group that already holds the arrays is not an error.
+// The writer writes over a group
+// that already holds the arrays without an error.
 void test_write_replaces_the_arrays_that_are_there() {
     const std::string path = "written_twice.h5";
     {
@@ -522,8 +527,8 @@ void test_write_replaces_the_arrays_that_are_there() {
     check_grid_holds_the_expected(grid);
 }
 
-// The array that is replaced does not have to match what is written,
-// so a group left over from something else is overwritten all the same.
+// The array that is replaced does not have to match what is written.
+// So a group left over from something else is overwritten all the same.
 void test_write_replaces_an_array_of_another_shape_and_datatype() {
     const std::string path = "written_over.h5";
     {
@@ -571,12 +576,12 @@ void test_include_writes_only_the_arrays_it_lists() {
     CHECK(grid.kind[0, 0] == untouched_kind);
 }
 
-// The name of the file that the compressed writers write,
+// The name of the file that GridZstdHdf5Writer writes,
 // which the run without the plugins reads back.
 const std::string kZstdFile = "written_grid_zstd.h5";
 
-// Return the number of filters that the array called name of the group
-// '/out' of the file called path is stored through.
+// Return the number of filters that the array called name
+// of the group '/out' of the file called path is stored through.
 int filters_of(const std::string& path, const std::string& name) {
     H5::H5File file(path, H5F_ACC_RDONLY);
     const H5::DataSet array = file.openDataSet("/out/" + name);
@@ -616,7 +621,7 @@ void test_writes_a_chunked_dataset() {
     check_grid_holds_the_expected(grid);
 }
 
-// Deflate is built into hdf5, so this round trip needs no plugin.
+// Deflate is built into HDF5, so this round trip needs no plugin.
 void test_writes_a_deflated_dataset() {
     const std::string path = "written_grid_deflate.h5";
     {
@@ -638,7 +643,7 @@ void test_writes_a_deflated_dataset() {
     check_grid_holds_the_expected(grid);
 }
 
-// Zstandard is a filter that hdf5 loads at run time.
+// Zstandard is a filter that HDF5 loads at run time.
 void test_writes_a_dataset_through_a_filter_of_a_plugin() {
     {
         Grid grid(grid_rows, grid_cols);
@@ -690,8 +695,9 @@ void test_writes_a_dataset_through_a_filter_without_a_level() {
     check_grid_holds_the_expected(grid);
 }
 
-// A column major dataset is gathered into row major order before it is
-// compressed, so an element that takes a wrong turn shows up here.
+// A column-major dataset is gathered into row-major order
+// before it is compressed,
+// so an element that takes a wrong turn shows up here.
 void test_writes_a_compressed_column_major_dataset() {
     const std::string path = "written_field_zstd.h5";
     {
@@ -713,8 +719,6 @@ void test_writes_a_compressed_column_major_dataset() {
 
 // Without the plugin, a writer says so before it writes anything,
 // and a reader says so about the file that was written with it.
-// This runs with HDF5_PLUGIN_PATH cleared,
-// after the run that leaves the file behind.
 void test_reports_a_filter_that_is_not_there() {
     Grid grid(grid_rows, grid_cols);
     fill_expected(grid);
@@ -725,13 +729,14 @@ void test_reports_a_filter_that_is_not_there() {
     CHECK(contains(write_error, "the 'zstd' filter is not available"));
     CHECK(contains(write_error, "HDF5_PLUGIN_PATH"));
 
-    // Deflate is built into hdf5, so it is there whatever the plugin path is.
+    // Deflate is built into HDF5, so it is there whatever the plugin path is.
     CHECK(error_of([&] {
               write_from<GridDeflateHdf5Writer>(out, "/deflate", grid);
           }).empty());
 
-    // The run with the plugins leaves the file behind, and ctest orders it
-    // before this one; on its own there is nothing here to read back.
+    // The run with the plugins leaves the file behind,
+    // and ctest orders it before this one.
+    // On its own, there is nothing here to read back.
     if (!std::filesystem::exists(kZstdFile)) {
         std::printf("FAIL '%s' is not there; run the 'hdf5' test first\n",
                     kZstdFile.c_str());
@@ -916,7 +921,7 @@ void test_reports_a_part_that_does_not_fit() {
 }
 
 // A part is written into an array that is already there,
-// which is what write_dataset creates.
+// which write_dataset or create_dataset creates.
 void test_reports_a_part_written_into_a_group_without_the_array() {
     const std::string path = "partial_missing.h5";
     {
@@ -936,8 +941,8 @@ void test_reports_a_part_written_into_a_group_without_the_array() {
     CHECK(contains(error, "'/out/temperature' is not in the HDF5 file"));
 }
 
-// A reader looks its arrays up again as it reads,
-// so a group written again after it was constructed
+// A reader looks its arrays up again as it reads.
+// So a group written again after the reader was constructed
 // is read back as it stands rather than as it was.
 void test_reads_a_group_that_was_written_again() {
     const std::string path = "written_again.h5";
@@ -959,7 +964,7 @@ void test_reads_a_group_that_was_written_again() {
         write_from<GridHdf5Writer>(file, "/out", grid);
     }
 
-    // Reading asks nothing of the reader, so a const one reads.
+    // A read asks nothing of the reader, so a const reader can read.
     Grid grid(grid_rows, grid_cols);
     reader.read_dataset(grid);
     check_grid_holds_the_expected(grid);
@@ -996,8 +1001,9 @@ void test_creates_a_dataset_and_fills_it_in() {
     check_grid_holds_the_expected(grid);
 }
 
-// A created array replaces one of another shape and datatype, like a written
-// one, and is stored the way the dataset declares it.
+// A created array replaces one of another shape and datatype,
+// like a written one,
+// and is stored the way the dataset declares it.
 void test_create_replaces_an_array_that_is_there() {
     const std::string path = "created_again.h5";
     {
@@ -1016,7 +1022,7 @@ void test_create_replaces_an_array_that_is_there() {
         writer.create_dataset(shape);
     }
 
-    // The arrays are there with the new shape, holding nothing in particular.
+    // The arrays are there with the new shape, and hold nothing in particular.
     H5::H5File file(path, H5F_ACC_RDONLY);
     Grid grid(grid_rows + 1, grid_cols);
     CHECK(error_of([&] {
@@ -1055,8 +1061,9 @@ int main(int argc, char** argv) {
     // so the library does not have to print them as well.
     H5::Exception::dontPrint();
 
-    // The run without the plugins reads the file that the run with them
-    // leaves behind, and checks nothing that needs a filter of a plugin.
+    // The run without the plugins reads the file
+    // that the run with them leaves behind,
+    // and checks nothing that needs a filter of a plugin.
     if (argc > 1 && std::string(argv[1]) == "--without-plugins") {
         test_reports_a_filter_that_is_not_there();
 
